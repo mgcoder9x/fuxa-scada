@@ -1,7 +1,17 @@
 # 04 — Task 5: Token_Service (token & phiên)
 
 > Tương ứng **Task 5** trong `../tasks.md`. Requirement: 2.1–2.8, 3.1–3.3.
-> Thiết kế: `../design/02-token-and-session.md`. Sở hữu property **P-007, P-008**.
+> Thiết kế: `../design/02-token-and-session.md`. Sở hữu property **P-007, P-008** (+ P-015 refresh).
+
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-019, D-021, D-015
+> Refresh "xoay vòng" phiên bản cũ là **stateless** — token cũ vẫn sống tới hạn (defect **N-015**). Sửa:
+> - **D-019 (task 5.7, P-015 tại 5.8):** thêm **`Refresh_Token_Store`** phía server (hash-at-rest,
+>   `family`/`jti`/`parent_jti`/`state`), **consume-and-rotate atomic**, **reuse-detection RFC 9700**
+>   (replay token đã dùng ⇒ thu hồi cả family), thu hồi family khi sign-out/đổi mật khẩu/disable.
+> - **D-021 (task 5.6):** pin `algorithms` khi verify (chặn alg-confusion), thêm & validate
+>   `iss`/`aud`/`sub`/`jti`/`typ`, thêm `kid` để xoay khóa (`../design/02` §3/§5/§7).
+> - **D-015:** đóng dấu **`tokenVersion`** vào access token để thu hồi chủ động; token `roles`/`groups`
+>   chỉ để tương thích, **không** phải nguồn thẩm quyền (xem guide 07 & `../design/05` §4.1).
 
 ## Mục tiêu
 

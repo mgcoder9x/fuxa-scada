@@ -202,10 +202,21 @@ of which alone is insufficient:
 1. **A random, high-entropy, one-time initial secret (never the literal `'123456'`).**
    `seedDefaultAdministrator` generates a cryptographically random initial password (drawn from a
    CSPRNG, e.g. `crypto.randomBytes`), hashes it with `Password_Hasher.hash` (§03; module default
-   bcrypt cost 12, ≥ FUXA's 10 — **D-008**), and persists **only the hash**. The plaintext is
-   surfaced to the operator **once** through a secured out-of-band channel — written to a
-   permission-restricted file under the FUXA appdata/`logDir` boundary and emitted a single time to
-   the server console/log at startup — and is **never** persisted by the module in plaintext.
+   bcrypt cost 12, ≥ FUXA's 10 — **D-008**), and persists **only the hash**. The initial secret is
+   delivered to the operator through a **dedicated secure enrollment channel — never the shared
+   application log or console** (**D-022**, fixes **N-018**):
+   - **Interactive first-run (default).** An operator-controlled CLI at a controlled console sets
+     the initial administrator secret directly (a first-run enrollment ceremony). No secret value is
+     written to `fuxa.log` or emitted via `runtime.logger`/`console`.
+   - **Automated provisioning.** The module issues a **one-time enrollment token** — short TTL,
+     hashed at rest, single-use — surfaced **once** to an operator-only secured channel; the operator
+     redeems the token to set the real secret. Only the token's hash is persisted; the token is
+     invalidated on first redemption or TTL expiry.
+
+   In **no** configuration does the module persist the plaintext secret or write it (or a redeemable
+   token) to the shared application log/console. This replaces the earlier "permission-restricted
+   file + single console/log emission" disclosure, which was credential disclosure via logs (N-018:
+   logs are backed up, shipped, and read by support/operators).
 2. **The `mustRotate` gate (AC-17.2).** The seeded record is written with
    `metadata.mustRotate = true`, so the `Authorization_Service` denies it every protected operation
    except `account.rotatePassword` ([§2](#2-the-mustrotate-flag), §05 §6).
@@ -277,7 +288,7 @@ sequenceDiagram
         B->>US: create({ username:'admin', fullname, passwordHash, groups:-1, roles:[],\n metadata:{ mustRotate:true } })
         US-->>B: ok
         B->>AL: record(bootstrap.seed, username, time)   %% AC-17.5
-        B->>CR: disclose one-time secret ONCE (secured file + console)
+        B->>CR: enroll ONCE via secure channel (interactive CLI / one-time token — never app log, D-022)
     else >=1 administrator present (AC-17.4)
         B->>B: create no default
         B->>US: remediateKnownDefaultAdmins(...)   %% §8, security (recommended)
@@ -303,6 +314,11 @@ RotateOutcome =
   | { kind: 'invalid_new',  error: 'weak_or_reused_password', detail }  // policy / reuse guard
 ```
 
+- **HTTP endpoint (D-018, added 2026-07-13 — closes N-013).** Exposed as **`POST /api/account/rotate-password`**,
+  wired in the composition root (which must also instantiate `Account_Service`); see the master map
+  "API Composition Root & Cutover Strategy". Without this endpoint a gated admin was deadlocked
+  (specified operation, no way to call it). On success it clears `mustRotate` **and bumps
+  `tokenVersion`** (D-015) so tokens minted before rotation are invalidated.
 - **Gated as the sole exception (AC-17.2).** The operation's `requiredPermission` is
   `account.rotatePassword` (§05 §2.2). When `mustRotate` is true, §05 §4.2 step 2 permits **only**
   this permission and denies all others — so rotation is reachable while nothing else is.
@@ -428,8 +444,9 @@ retain-existing branch, `remediateKnownDefaultAdmins(admins)`:
    test whether its stored hash verifies the literal `'123456'` via `Password_Hasher.verify('123456',
    storedHash)` (the well-known FUXA default, N-007).
 2. **Force rotation.** For any account that matches, set `metadata.mustRotate = true` (and,
-   recommended, re-hash the stored credential to a fresh random one-time secret disclosed once as in
-   [§3.2](#32-the-seed-credential-eliminating-n-007)), via `User_Store.update`. This arms the gate so
+   recommended, re-hash the stored credential to a fresh random one-time secret enrolled once via the
+   **secure enrollment channel** in [§3.2](#32-the-seed-credential-eliminating-n-007) — never the app
+   log/console, **D-022**), via `User_Store.update`. This arms the gate so
    the legacy admin can do nothing but rotate — converting a migrated install into the same secure
    resting state as a fresh seed.
 3. **Do not create a new admin.** AC-17.4 is preserved: no default is created; only the existing
@@ -577,6 +594,16 @@ and assert the module's **own** seed path (empty-store branch) never writes a cr
 verifies `'123456'`. This is the concrete counterpart of N-007's elimination and the D-005/TO-005
 verification clauses.
 
+### 10.4 Security test — no plaintext secret reaches the log/console (D-022, N-018)
+
+With a spy over `runtime.logger` (and `console`), run the seed path and the migration remediation;
+assert **no** log/console call argument contains the seeded/rotated plaintext secret **or** a
+redeemable enrollment token (only its hash may be persisted). For the interactive-first-run path,
+assert the secret is obtained via the injected CLI-enrollment collaborator, not emitted anywhere. For
+the automated-provisioning path, assert the one-time enrollment token is single-use (a second
+redemption fails) and TTL-bounded. This is the concrete verification clause of **D-022** closing
+**N-018** (credential disclosure via logs).
+
 ---
 
 ## 11. Traceability (this section)
@@ -590,6 +617,7 @@ verification clauses.
 | AC-17.5 | Record the seeding event (username, time) | uses FUXA winston logger via `Audit_Sink` (§09 §6, verified `runtime/logger.js`) | example/integration ([§10.2](#102-example--integration-tests-seeding-idempotency-audit)) |
 | AC-8.5 (ref) + AC-17.1 | ≥1 administrator always remains across deletion sequences | `removeUsers` has **no** last-admin check (verified) — guard added in §04 §6.5 | **property — P-010** (jointly owned §04 + §12) |
 | N-007 (security) | No usable known-default credential survives first boot (random one-time secret + gate; migration forces rotation) | `bcrypt.hashSync('123456',10)` in `setDefault` (verified) | security example/integration ([§10.3](#103-security-test-no-usable-known-default-survives)) |
+| N-018 (security) | The initial/rotated secret is delivered via a secure enrollment channel (interactive CLI + one-time token); it is **never** written to the shared app log/console (D-022) | none (FUXA has no enrollment channel — N-007/N-018); replaces the prior console/log disclosure | security ([§10.4](#104-security-test--no-plaintext-secret-reaches-the-logconsole-d-022-n-018)) |
 
 No orphan criteria: AC-17.1 … AC-17.5 each map to at least one test above (AC-17.1/17.4/17.5 to
 example/integration; AC-17.2/17.3 to P-009; AC-17.1 additionally to P-010's base case). This section
@@ -598,5 +626,6 @@ maps back to REQ-17 only, matching
 master map's Table of Contents (`DES-BOOT` owns P-009; jointly owns P-010 with §04). Decisions
 honored: **D-005** (auto-seed + forced rotation, CONFIRMED), **TO-005** (option (a) default, CLI
 fallback), **DV-004** (REQ-17), **DV-005** (AC-8.5), **D-008** (bcrypt cost 12), **N-007** (root cause
-eliminated), **D-003** (no FUXA core edits — bootstrap is module-owned and runs at the composition
+eliminated), **D-022** (secure enrollment channel — no secret to log/console; **N-018** eliminated),
+**D-003** (no FUXA core edits — bootstrap is module-owned and runs at the composition
 root).

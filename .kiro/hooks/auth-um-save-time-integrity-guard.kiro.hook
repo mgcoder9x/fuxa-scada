@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "name": "Auth Module — Save-Time Integrity Guard",
+  "description": "Automatically runs a fast, read-only anti-drift integrity check whenever a decisions/design/requirements/tasks file in the auth-user-management spec is saved. Catches ledger overwrites (the N-020 failure mode), ID reuse, and edits that contradict a RESOLVED defect or corrected design — at the moment of the edit.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      ".kiro/specs/auth-user-management/decisions/*.md",
+      ".kiro/specs/auth-user-management/design/*.md",
+      ".kiro/specs/auth-user-management/requirements.md",
+      ".kiro/specs/auth-user-management/tasks.md",
+      ".kiro/specs/auth-user-management/design.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A file in the `auth-user-management` spec was just saved. Run a FAST, READ-ONLY anti-drift integrity check. Do NOT edit any file as part of this check.\n\n1. Confirm the saved file still contains ALL the required structural markers declared for it in `.kiro/specs/auth-user-management/decisions/00-INDEX.md` §1, and contains NO content from another file's domain (e.g. a chat transcript or unrelated code inside a ledger file — the exact N-020 failure mode).\n2. If it is a ledger file (`decisions/01-ai-decisions.md`, `02-deviations.md`, `03-tradeoffs.md`, `04-notes.md`, `traceability.md`): confirm its ID sequence is still monotonic and consistent with the §2 high-water marks — no reused, renumbered, or deleted IDs; `TO-003` stays QUARANTINED; superseded entries are marked, not removed.\n3. If it is `design/**`, `design.md`, `requirements.md`, or `tasks.md`: confirm the change does not contradict an `Active (CONFIRMED)` decision (`01-ai-decisions.md`) or a corrected design section, and does not reopen a defect that traceability §F marks RESOLVED.\n4. Output a single-line PASS if all checks hold. On ANY failure: STOP, report the exact problem and the offending file/line, and ASK THE USER before any remediation. Only with user approval, log a new incident in `00-INDEX.md` §3 + a new `N-*` in `04-notes.md` (respect the high-water marks). Keep the output concise."
+  }
+}

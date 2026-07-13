@@ -1,7 +1,15 @@
 # 08 — Task 9: User_Service (CRUD người dùng)
 
-> Tương ứng **Task 9** trong `../tasks.md`. Requirement: 5.1–5.4, 6.1–6.4, 7.1–7.5, 8.1–8.5.
-> Thiết kế: `../design/04-user-management.md`. DES-USER không sở hữu property (test kiểu ví dụ; dùng lại P-003).
+> Tương ứng **Task 9** trong `../tasks.md`. Requirement: 5.1–5.4, 6.1–6.4, 7.1–7.5, 8.1–8.5, 4.6, 4.7.
+> Thiết kế: `../design/04-user-management.md`. DES-USER không sở hữu property (test kiểu ví dụ; dùng lại P-003, P-016).
+
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-017 & D-020
+> - **D-017/DV-007 (task 9.1/9.2):** bước validate của `create`/`update` phải **từ chối mật khẩu >72 byte UTF-8**
+>   (**AC-4.6**) và áp min-length + common-password blocklist (**AC-4.7**) **trước khi** băm (`../design/04` §2.3).
+> - **D-020 (cơ chế ở store, task 2.9; property P-016 tại 2.10):** `create` dựa trên `INSERT` atomic (trùng
+>   username do khóa chính, không đọc-rồi-ghi); guard **admin cuối** chạy trong `BEGIN IMMEDIATE` để 2 lệnh xóa
+>   song song không thể cùng đưa số admin về 0. `unknown_user`/**404** cho update/delete user **vẫn giữ** (đây là
+>   admin CRUD, không phải oracle đăng nhập — khác với DV-006 ở guide 06).
 
 ## Mục tiêu
 

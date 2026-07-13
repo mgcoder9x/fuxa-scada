@@ -115,9 +115,22 @@ verify(plaintext: string, hash: string): boolean
   rather than crashing the sign-in path. This mirrors FUXA's guard
   `userInfo && userInfo.length && userInfo[0].password` before it calls `compareSync`
   (verified in `server/api/auth/index.js`).
-- **Encoding note.** bcrypt truncates input beyond 72 bytes; this is a documented property of
-  the algorithm FUXA already relies on, not a module regression. Both `hash` and `verify` see
-  the same truncation, so the round-trip (P-001) and rejection (P-002) properties are unaffected.
+- **Bounded input domain (bcrypt 72-byte truncation) — corrected 2026-07-13 (D-017, fixes N-012).**
+  bcrypt hashes only the **first 72 bytes** of its input. This is **not** harmless for the rejection
+  property: two *distinct* plaintexts that share their first 72 UTF-8 bytes hash identically, so
+  `verify(B, hash(A))` would be **true** for such a pair — which would violate a naive P-002. (The
+  earlier claim here that truncation left P-002 "unaffected" was **wrong** and is retracted.) The
+  module therefore **bounds the password domain**: `User_Service` **rejects** any password whose
+  UTF-8 length exceeds **72 bytes** with a validation error (AC-4.6) *before* `hash` is called, so no
+  two accepted passwords can collide under truncation, and P-002 is stated and proven **over that
+  bounded domain** ([§7](#7-correctness-properties)). 72 bytes ≈ 72 ASCII characters, comfortably
+  above the NIST SP 800-63B minimum. `hash` itself stays total (never throws); the length rule is a
+  **service-layer validation policy**, not a hasher behavior.
+- **Hash-scheme versioning (future-proofing, D-017).** bcrypt digests are self-describing
+  (`$2b$<cost>$…`); the design reserves a `hashScheme` concept so a later migration to Argon2id
+  (TO-007 option 3) can be introduced **without breaking verification** of existing bcrypt hashes —
+  `verify` dispatches on the stored scheme. No migration is performed now; this only keeps the door
+  open non-breakingly.
 
 ---
 
@@ -265,9 +278,11 @@ Refines the master map's **Security Posture** for the `Password_Hasher`:
   update flow (section 04), never in the store. It does not affect P-001/P-002.
 - **Timing considerations of compare.** bcrypt's `compareSync` compares the derived checksum in
   constant time with respect to the checksum bytes, so `verify` does not leak how many leading
-  characters matched. Note, however, that the *user-existence* distinction (404 unknown user vs
-  401 bad password) is mandated by AC-1.2/AC-1.3 and is handled in section 01; the hasher itself
-  contributes no additional timing side channel beyond bcrypt's own cost.
+  characters matched. Since DV-006, the sign-in path no longer distinguishes unknown-user from
+  bad-password (both return an identical 401, AC-1.2/AC-1.3, handled in section 01) and the
+  unknown-user path performs a dummy-hash `verify` to equalize timing — so the hasher must offer a
+  usable comparison cost even against a fixed dummy hash; the hasher itself contributes no
+  additional timing side channel beyond bcrypt's own cost.
 - **Library confinement (N-001).** `bcryptjs` is imported in exactly one module-owned file (the
   Hash seam), so a future change of hashing library or a FUXA upgrade touches one file.
 
@@ -303,10 +318,16 @@ produced hashes `h1 = hash(p)` and `h2 = hash(p)` of the same `p`, both `verify(
 
 ### Property 2: Password hash rejects a different plaintext
 
-*For any* two distinct plaintext passwords `A` and `B` with `A ≠ B`, `verify(B, hash(A))` is
-false.
+*For any* two distinct plaintext passwords `A` and `B` with `A ≠ B` **and both within the enforced
+valid-password domain (UTF-8 byte length ≤ 72, AC-4.6)**, `verify(B, hash(A))` is false.
 
-**Validates: Requirements 4.5** — (P-002)
+> The 72-byte bound is **required**, not cosmetic: without it, two distinct passwords sharing their
+> first 72 bytes would cross-verify under bcrypt truncation (see [§2.2](#2-password_hasher-interface--contract)).
+> Passwords exceeding 72 bytes are rejected at validation (AC-4.6) and never hashed, so they are
+> outside this property's domain. (Corrected 2026-07-13 per D-017 / N-012 — the prior unbounded
+> statement was false for bcrypt.)
+
+**Validates: Requirements 4.5, 4.6** — (P-002)
 
 ---
 
@@ -330,8 +351,11 @@ that stress a hasher:
 - **Base**: `fc.string()` for arbitrary-length ASCII.
 - **Unicode**: `fc.fullUnicodeString()` to exercise multi-byte characters and combining marks.
 - **Empty**: include the empty string `''` (the hasher must be total — [§2.2](#22-contract-details)).
-- **Long**: strings well beyond bcrypt's 72-byte boundary (e.g. up to a few hundred chars) to
-  exercise the documented truncation consistently across `hash` and `verify`.
+- **Long (within bound)**: strings up to **exactly 72 UTF-8 bytes** to exercise the boundary of the
+  accepted domain. Strings **beyond** 72 bytes are NOT fed to P-001/P-002 — they are rejected at
+  validation (AC-4.6). A **separate example test** asserts a >72-byte password is rejected with a
+  validation error and never reaches `hash` (this is the direct guard against the N-012 truncation
+  collision).
 - **Near-duplicates** (critical for P-002's rejection boundary): from a base string `s`, derive
   candidates such as `s + ' '` (trailing space), a case-flipped variant, and a
   single-character-different variant, so distinct-but-similar pairs are tested, not just
@@ -340,10 +364,13 @@ that stress a hasher:
 Combine via `fc.oneof(...)` so each run samples across all categories.
 
 - **P-001** — `fc.property(passwordArb, p => { const h1 = hash(p), h2 = hash(p); return verify(p,h1) && verify(p,h2) && h1 !== h2; })`.
-- **P-002** — generate an unordered pair and **enforce `A ≠ B` with a `.filter(([a,b]) => a !== b)`**
-  on `fc.tuple(passwordArb, passwordArb)` (drop equal pairs rather than assume inequality), then
-  assert `verify(B, hash(A)) === false`. Bias the pair generator to include near-duplicate pairs
-  so the rejection boundary is exercised, not only far-apart strings.
+- **P-002** — generate an unordered pair on `fc.tuple(passwordArb, passwordArb)` with **both members
+  constrained to ≤ 72 UTF-8 bytes** (the accepted domain, AC-4.6) and **enforce `A ≠ B` with a
+  `.filter(([a,b]) => a !== b)`** (drop equal pairs rather than assume inequality), then assert
+  `verify(B, hash(A)) === false`. Bias the pair generator to include near-duplicate pairs (e.g.
+  differing only in the last byte, still within 72 bytes) so the rejection boundary is exercised,
+  not only far-apart strings. **Do not** generate >72-byte members here (that collision is expected
+  and is handled by the AC-4.6 validation-rejection test above, not by P-002).
 
 ### 8.2 Cost factor for tests
 
@@ -371,10 +398,13 @@ digest.
 | AC-4.2 | Store persists only the hash, never the plaintext (read path also excludes the hash, REQ-6 AC-6.2) | store shape `{…, password, …}` in `usrstorage.js`; hash produced upstream | example/integration (owned by §06); referenced here |
 | AC-4.3 | Same plaintext hashed twice → two hashes that each verify (per-hash random salt) | `bcrypt.hashSync(pwd, 10)` (numeric-rounds form generates a fresh salt per call) | **property — P-001** |
 | AC-4.4 | `verify(p, hash(p))` reports a match | relocates inline `bcrypt.compareSync(...)` behind the Hash seam | **property — P-001** (combined) |
-| AC-4.5 | `verify(B, hash(A))` reports no match for `A ≠ B` | `bcrypt.compareSync(req.body.password, userInfo[0].password)` in `auth/index.js` | **property — P-002** |
+| AC-4.5 | `verify(B, hash(A))` reports no match for `A ≠ B` (over the ≤72-byte accepted domain) | `bcrypt.compareSync(...)` in `auth/index.js`; bounded per D-017 | **property — P-002** |
+| AC-4.6 | Reject a password whose UTF-8 length > 72 bytes before hashing (root fix for the truncation collision, N-012) | bcrypt 72-byte truncation (documented) | example/validation test |
+| AC-4.7 | Reject a password below the configured minimum length or on the common-password blocklist | — (new policy, NIST SP 800-63B-4) | example/validation test |
 
-No orphan criteria: AC-4.1 … AC-4.5 each map to at least one test above (AC-4.1/AC-4.2 to
+No orphan criteria: AC-4.1 … AC-4.7 each map to at least one test above (AC-4.1/AC-4.2 to
 example/integration owned by sections 04/06 and referenced here; AC-4.3/4.4 to P-001; AC-4.5 to
-P-002). This section maps back to REQ-4 only, matching
+P-002 over the bounded domain; AC-4.6/AC-4.7 to example/validation tests in the service layer,
+§04). This section maps back to REQ-4 only, matching
 [`../decisions/traceability.md`](../decisions/traceability.md) §A/§B (`DES-PWD → REQ-4`) and the
 master map's Table of Contents (`DES-PWD` owns P-001, P-002).

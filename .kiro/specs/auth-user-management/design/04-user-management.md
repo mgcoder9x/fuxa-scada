@@ -53,8 +53,9 @@ Scope, precisely:
   record (AC-7.5).
 - **REQ-8 (Delete).** Remove an existing record and return success (AC-8.1); also remove the user
   from the **in-memory permission cache** (AC-8.2); return an error identifying a missing username
-  (AC-8.3); after deletion, subsequent sign-in for that username is rejected with **404** (AC-8.4,
-  cross-referenced to section 01); and **reject deletion of the last remaining administrator**,
+  (AC-8.3); after deletion, subsequent sign-in for that username is rejected with the **same generic
+  401** as any unknown username (AC-8.4 as refined by DV-006, cross-referenced to section 01); and
+  **reject deletion of the last remaining administrator**,
   making no store mutation (AC-8.5, admin-determination referenced from section 05).
 
 What this section **delegates** and only references (see [§7](#7-authorization-boundary-req-5-8)
@@ -67,7 +68,7 @@ and [§9](#9-testing-notes-req-5-8)):
 - the `User_Record` write→read round-trip (P-003), the read-path hash exclusion, and the FUXA
   store shape / `info.roles` handling → [`06-persistence-and-serialization.md`](./06-persistence-and-serialization.md)
   and [`11-data-models.md`](./11-data-models.md) (REQ-13);
-- the post-delete sign-in outcome (AC-8.4 → 404) → [`01-authentication.md`](./01-authentication.md)
+- the post-delete sign-in outcome (AC-8.4 → generic **401**, DV-006) → [`01-authentication.md`](./01-authentication.md)
   (REQ-1, AC-1.2).
 
 ### 1.1 Where it sits in the layered architecture
@@ -199,6 +200,14 @@ DeleteOutcome =
 - **Idempotent inputs are normalized (D-006).** `username` is trimmed and used as the sole store
   key on every lookup/write; extra request fields are dropped by the API mapping and never reach
   the store as filters.
+- **Password-domain & policy validation (AC-4.6, AC-4.7 — D-017/DV-007).** On create (§3.1) and on
+  password-bearing update (§5.1), the `User_Service` validates the plaintext **before** calling
+  `Password_Hasher.hash`: reject with a `validation_error` if the UTF-8 byte length exceeds **72
+  bytes** (AC-4.6 — required so bcrypt's 72-byte truncation cannot make two distinct passwords
+  equivalent, N-012), or if it is shorter than the configured minimum length or on the configured
+  common-password blocklist (AC-4.7, NIST SP 800-63B-4). These rejections make **no** store
+  mutation (consistent with AC-5.3/AC-7.5). The hasher contract itself stays total (§03 §2.2); the
+  policy is enforced here in the service layer.
 
 ---
 
@@ -224,14 +233,24 @@ any store mutation:
    AC-14.2; secrets sanitized, AC-14.5) and return `{ kind:'created', user }` where `user` is the
    `UserView` (no hash).
 
-### 3.2 Duplicate detection without mutation (AC-5.2)
+### 3.2 Duplicate detection without mutation (AC-5.2) — atomic at the DB (D-020, fixes N-016)
 
-This is a deliberate **divergence from FUXA's upsert**. FUXA's `usrstorage.setUser` checks
-existence and then does `INSERT OR REPLACE` (new) or `UPDATE` (existing) — a create request for
-an already-existing username would **overwrite** the stored record (verified). AC-5.2 forbids
-this: a duplicate create must be rejected and the existing record left unmodified. The service
-therefore performs an explicit pre-write existence check and returns `duplicate` **before** any
-write occurs, so there is no code path in which a duplicate create mutates the existing record.
+FUXA's `usrstorage.setUser` uses `INSERT OR REPLACE` (verified), so a create for an existing
+username **overwrites** the record. AC-5.2 forbids this. **The authoritative guarantee is a DB-level
+atomic insert, not an application pre-check:**
+
+- The adapter's create (§06 §5.2, D-016) uses a **plain `INSERT`** (not `INSERT OR REPLACE`) on the
+  `username` PRIMARY KEY. A concurrent/duplicate create therefore fails with a **primary-key
+  conflict**, which the adapter maps to the `duplicate` outcome (`duplicate_username`). This is
+  atomic: two concurrent creates of the same username can **never** both succeed, and neither
+  overwrites an existing record.
+- The service **also** performs the pre-write `User_Store.get(username)` check, but this is now a
+  **friendly fast-path** (nice error without hitting the DB), **not** the correctness guarantee —
+  a pre-check alone is a TOCTOU race under concurrency (N-016). The DB unique-key constraint is
+  what actually holds under interleaving.
+
+This closes the create half of N-016: there is no interleaving in which a duplicate create mutates
+or overwrites the existing record.
 
 ### 3.3 Hashing before persist (AC-5.4)
 
@@ -443,12 +462,13 @@ identifying the missing username. The service's up-front existence check
 ([§6.1](#61-flow) step 1) supplies that error (`{ kind:'unknown_user' }` → 404) before invoking
 the store.
 
-### 6.4 Post-delete sign-in returns 404 (AC-8.4) — cross-reference to section 01
+### 6.4 Post-delete sign-in returns a generic 401 (AC-8.4, DV-006) — cross-reference to section 01
 
-AC-8.4 requires that, once a user is deleted, subsequent sign-in for that username is rejected
-with **404**. This falls out of the delete removing the store row: the `Authentication_Service`
-looks the user up via `User_Store.findUser(username)`, which now returns none, yielding the
-`unknown_user` sign-in outcome mapped to **404** (owned by
+AC-8.4 (as refined by DV-006) requires that, once a user is deleted, subsequent sign-in for that
+username is rejected with the **same generic 401** as any unknown username. This falls out of the
+delete removing the store row: the `Authentication_Service` looks the user up via
+`User_Store.findUser(username)`, which now returns none, yielding the `unknown_user` sign-in outcome
+mapped to a generic **401** identical to bad-password (owned by
 [`01-authentication.md`](./01-authentication.md) §4, AC-1.2). This section guarantees the
 *precondition* (the row and its cache entry are gone); section 01 owns the sign-in outcome. An
 integration test spanning delete → sign-in verifies the end-to-end behavior
@@ -481,6 +501,23 @@ also classifies as administrators. "Last administrator" means that remaining cou
 Because the classification is delegated to §05, this section adds no second, divergent definition
 of "administrator" (single-owner discipline); it owns only the *ordering* guarantee (guard before
 removal) and the `last_admin` outcome.
+
+**Atomicity under concurrency (D-020, fixes N-016).** The guard is read-then-act across `await`
+points, so a naive implementation lets two concurrent deletes of the two last admins **both** pass
+the count and reach zero admins (this interleaving is possible **even in a single Node process** —
+each `await` yields the event loop; P-010's sequential histories cannot catch it). The count →
+guard → delete therefore executes inside **one `BEGIN IMMEDIATE` transaction** on the adapter's
+own connection (§06): `BEGIN IMMEDIATE` takes SQLite's **write lock**, so concurrent last-admin
+deletes are **serialized** — the second transaction observes the first's committed delete, recounts,
+and correctly refuses to remove the now-last admin. Because SQLite's lock is a **file lock**, this
+holds across connections and processes (unlike an in-process async mutex). The invariant "≥1 admin
+always remains" is thus enforced at the persistence layer, quantified over interleavings by the new
+concurrency property **P-016** (not merely the sequential P-010).
+
+> **Multi-node note.** `BEGIN IMMEDIATE` on a shared SQLite file serializes writers correctly for a
+> single-file deployment. A true multi-node/HA deployment with separate stores must escalate to
+> **D-016 option (b)** (a dedicated IAM DB with serializable isolation / a distributed lock); this
+> is flagged, not silently assumed.
 
 > **Divergence from FUXA (AC-8.5).** FUXA's `removeUsers` applies no last-administrator check — it
 > deletes any existing row regardless of how many admins remain (verified,
@@ -700,9 +737,10 @@ End-to-end through the real router against the FUXA store adapter and real `Pass
 - **Update retains hash, then sign-in still works (AC-7.3 + §01).** Create a user, update its
   `fullname` **without** a password, then sign in with the original password — sign-in succeeds
   (existing hash retained), confirming AC-7.3 end-to-end.
-- **Delete → cache eviction → sign-in 404 (AC-8.1/8.2/8.4).** Create then delete a user; assert
+- **Delete → cache eviction → sign-in generic 401 (AC-8.1/8.2/8.4, DV-006).** Create then delete a user; assert
   `runtime.users.getUserCache(username)` returns `undefined` (cache evicted, AC-8.2) and a
-  subsequent sign-in for that username returns **404** (AC-8.4, outcome owned by §01).
+  subsequent sign-in for that username returns the **generic 401** identical to any unknown user
+  (AC-8.4 per DV-006, outcome owned by §01).
 - **Last administrator cannot be deleted (AC-8.5).** In a store whose only administrator is
   `admin`, `delete('admin')` returns the `last_admin` outcome (**400**), the row and its
   `usersMap` cache entry remain, and a subsequent sign-in as `admin` still succeeds; after seeding
@@ -734,7 +772,7 @@ coverage for the round-trip lives in the P-003 property test owned by section 06
 | AC-8.1 | Delete existing → remove + success | `removeUsers` → `usrstorage.removeUser` `DELETE FROM users WHERE username = ?` | example + integration |
 | AC-8.2 | Also remove user from in-memory permission cache | `removeUsers` calls `usersMap.delete(username)`; `getUserCache` reads `usersMap` (`runtime/users/index.js`) | example + integration |
 | AC-8.3 | Delete missing username → error | module adds existence check (FUXA `removeUsers` resolves for zero-row DELETE) | example |
-| AC-8.4 | Post-delete sign-in for that username → 404 | store row gone → `findUser` none → `unknown_user`/404 (owned by §01, AC-1.2) | integration (cross-ref §01) |
+| AC-8.4 (DV-006) | Post-delete sign-in for that username → **generic 401** (identical to any unknown user) | store row gone → `findUser` none → `unknown_user` mapped to generic 401 (owned by §01, AC-1.2) | integration (cross-ref §01) |
 | AC-8.5 | Reject deleting the **last** administrator; make no store mutation | admin-determination via `adminGroups=[-1,255]` / `haveAdminPermission` in `server/api/jwt-helper.js` (classification owned by §05); guard precedes `removeUsers` | example (item 14) + integration (+ candidate `P-010`, cross-cutting with REQ-17 — flagged in §9) |
 
 No orphan criteria: AC-5.1…5.4, AC-6.1…6.4, AC-7.1…7.5, AC-8.1…8.5 each map to at least one test

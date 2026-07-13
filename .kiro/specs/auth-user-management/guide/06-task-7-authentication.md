@@ -3,6 +3,16 @@
 > Tương ứng **Task 7** trong `../tasks.md`. Requirement: 1.1–1.5, 15.1/15.2/15.4, 3.4.
 > Thiết kế: `../design/01-authentication.md`. DES-AUTH không sở hữu property (test kiểu ví dụ).
 
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo DV-006 (chống dò username)
+> Guide/FUXA cũ trả **404** cho username không tồn tại và **401** cho sai mật khẩu — đây là oracle
+> enumeration. Sửa (task 7.1/7.2):
+> - Unknown-user và bad-password trả **401 GIỐNG HỆT nhau** (cùng status + body `{ error:'invalid_credentials' }`),
+>   **không còn 404**. Nhánh unknown-user vẫn gọi `Password_Hasher.verify` với **dummy hash** để **đồng bộ timing**.
+> - Outcome mịn (`unknown_user` vs `bad_password`) chỉ dùng cho **audit phía server**, không lộ ra client.
+> - Sign-in sau khi user bị xóa cũng trả **401 generic** (AC-8.4, đồng bộ). Xem `../design/01` §3/§4/§7.
+> - Lưu ý: `user_not_found`/**404** VẪN đúng cho thao tác **admin CRUD** (sửa/xóa user — AC-7.4/8.3),
+>   vì đó là admin đã xác thực, không phải oracle ở màn đăng nhập.
+
 ## Mục tiêu
 
 Có `Authentication_Service.signIn(...)` trả **kết quả dạng tập đóng** (success / unknown_user /

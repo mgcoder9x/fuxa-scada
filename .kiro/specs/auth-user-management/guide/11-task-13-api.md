@@ -3,6 +3,18 @@
 > Tương ứng **Task 13** trong `../tasks.md`. Requirement: 1.x, 3.x, 5–9.x (backend), 10.2/10.3, 16.3/16.4, 17.1.
 > Thiết kế: các mục §01/§02/§04/§05, và §12 (bootstrap chạy lúc khởi động).
 
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-014, D-018, D-015 (+ N-018)
+> Bản cũ mount router module **sau** router FUXA và tái dùng cùng URL ⇒ Express kết thúc ở handler FUXA,
+> RBAC/audit/mustRotate của module **không chạy** (defect **N-014**). Sửa:
+> - **D-014 SUPERSEDE (task 13.5):** trong bootstrap API của FUXA, **ngừng mount** `usersApi`/`authApi` cho các URL
+>   trùng (`/api/signin`, `/api/refresh`, `/api/signout`, `/api/users`, `/api/roles`) và mount router module
+>   (sau `authLimiter`) — module là **authority duy nhất**. Client cutover (D-011) đi kèm cùng lúc.
+> - **D-018 (task 13.7):** thêm `api/account.router.js` phục vụ **`POST /api/account/rotate-password`** (mở khóa
+>   deadlock của admin `mustRotate`).
+> - **D-015 (task 13.1):** middleware dựng `Identity` từ **bản ghi sống** + kiểm `tokenVersion`, không tin claim.
+> - **N-018:** middleware/handler **không được** đưa secret/token vào `runtime.logger`/console.
+> - Property **P-014** (task 13.8) chốt: URL bị supersede do module xử lý, không phải handler FUXA còn sót.
+
 ## Mục tiêu
 
 Phơi module ra HTTP: router đăng nhập/refresh/signout, router users, router roles, middleware phân

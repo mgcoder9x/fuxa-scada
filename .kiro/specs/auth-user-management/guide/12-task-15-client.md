@@ -3,6 +3,13 @@
 > Tương ứng **Task 15** trong `../tasks.md`. Requirement: 11.2, 11.4, 12.1–12.5, 11.3, 12.6.
 > Thiết kế: `../design/07-ui-login-page.md` §5, `../design/08-ui-user-management-page.md` §2.4.
 
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo DV-006
+> Ở **`AuthSignInClient`**, sign-in **không còn trả 404/`user_not_found`**: unknown-user nay là **401
+> `invalid_credentials`** giống hệt sai mật khẩu. Nhánh `e.status === 404 ? 'user_not_found'` trong `toError`
+> của sign-in client là **nhánh chết** — bỏ đi hoặc giữ vô hại, nhưng đừng dựa vào nó. `user_not_found`/**404**
+> **vẫn đúng** cho **`UserAdminClient`** (admin CRUD sửa/xóa user — AC-7.4/8.3), không phải sign-in. Xem
+> `../design/01` §4 (DV-006) và guide 06.
+
 ## Mục tiêu
 
 Có các Angular service gọi API: `AuthSignInClient` (đăng nhập), `UserAdminClient` + `RoleAdminClient`

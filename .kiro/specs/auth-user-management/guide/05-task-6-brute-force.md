@@ -1,7 +1,17 @@
 # 05 — Task 6: Brute-Force guard (chống dò mật khẩu)
 
-> Tương ứng **Task 6** trong `../tasks.md`. Requirement: 15.1–15.5.
+> Tương ứng **Task 6** trong `../tasks.md`. Requirement: 15.1–15.6.
 > Thiết kế: `../design/10-brute-force-protection.md`. Sở hữu property **P-012**.
+
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo DV-008 & N-019
+> Hard lock thời lượng cố định + state per-process là điểm yếu (defect **N-019**). Sửa:
+> - **DV-008:** dùng **adaptive throttling** — backoff mũ `baseThrottleMs * backoffFactor^k`, có cap
+>   `maxThrottleMs` (**AC-15.2**) thay vì khóa cứng; mỗi khoảng chặn **hữu hạn** để kẻ biết username
+>   không khóa vĩnh viễn operator hợp lệ (**AC-15.6**). Giữ fail-closed threshold=0 (**AC-15.3**).
+> - **N-019:** state đếm qua **seam `BruteForceStore`** (mặc định in-memory; **shared store** như Redis,
+>   read-modify-write atomic, khi scale ngang — threshold không nhân theo số node, **AC-15.6**).
+> - Dùng **đồng hồ monotonic** (không `Date.now()`) để nhảy giờ/NTP không kết thúc khóa sớm.
+> - P-012 (task 6.2) nay là **state machine adaptive**, validate AC-15.1–15.6.
 
 ## Mục tiêu
 

@@ -44,8 +44,8 @@ The requirements below emphasize **testability**: acceptance criteria are writte
 #### Acceptance Criteria
 
 1. WHEN a sign-in request is received with a username and password that match a stored User_Record, THE Authentication_Service SHALL return a success response containing an Access_Token, the username, the full name, and the assigned roles.
-2. IF a sign-in request is received with a username that has no matching User_Record, THEN THE Authentication_Service SHALL return a response with HTTP status 404 and SHALL NOT return an Access_Token.
-3. IF a sign-in request is received with a username that matches a stored User_Record but a password that does not match the stored password hash, THEN THE Authentication_Service SHALL return a response with HTTP status 401 and SHALL NOT return an Access_Token.
+2. IF a sign-in request is received with a username that has no matching User_Record, THEN THE Authentication_Service SHALL return the **same** HTTP status 401 and the **same** response body as a wrong-password failure (AC-1.3), and SHALL NOT return an Access_Token, so the response does not reveal whether the username exists. *(Refined by DV-006: was HTTP 404; unified to 401 to remove the username-enumeration oracle.)*
+3. IF a sign-in request is received with a username that matches a stored User_Record but a password that does not match the stored password hash, THEN THE Authentication_Service SHALL return a response with HTTP status 401 and a generic error body (identical to the unknown-username case, AC-1.2) and SHALL NOT return an Access_Token; AND to avoid a timing oracle, THE Authentication_Service SHALL perform a comparable-cost password comparison (against a dummy hash) even when the username is unknown. *(Refined by DV-006: unknown-user and bad-password are made indistinguishable in both status/body and timing.)*
 4. IF a sign-in request is received that is missing either the username field or the password field, THEN THE Authentication_Service SHALL return a response with HTTP status 400 and an error identifier.
 5. WHEN the Authentication_Service verifies a submitted password, THE Authentication_Service SHALL delegate comparison to the Password_Hasher and SHALL NOT compare plaintext passwords directly.
 
@@ -85,7 +85,9 @@ The requirements below emphasize **testability**: acceptance criteria are writte
 2. THE User_Store SHALL persist only the password hash and SHALL NOT persist the plaintext password.
 3. WHEN the Password_Hasher hashes the same plaintext password twice, THE Password_Hasher SHALL produce two hashes that each verify successfully against that plaintext password.
 4. WHEN the Password_Hasher verifies a plaintext password against a hash produced from that same plaintext password, THE Password_Hasher SHALL report a successful match.
-5. WHEN the Password_Hasher verifies a plaintext password against a hash produced from a different plaintext password, THE Password_Hasher SHALL report a failed match.
+5. WHEN the Password_Hasher verifies a plaintext password against a hash produced from a different plaintext password, WHERE both passwords are within the accepted password domain (UTF-8 byte length not exceeding 72 bytes, per AC-4.6), THE Password_Hasher SHALL report a failed match.
+6. IF a password submitted for account creation or password change has a UTF-8 byte length exceeding 72 bytes, THEN THE User_Service SHALL reject it with a validation error and SHALL NOT hash or persist it. (Rationale: bcrypt truncates input beyond 72 bytes, so without this bound two distinct passwords that share their first 72 bytes would verify interchangeably — see DV-007 / N-012.)
+7. IF a password submitted for account creation or password change is shorter than the configured minimum length (default 12 characters; NIST SP 800-63B-4 recommends at least 15 for single-factor authentication) OR appears on the configured common-password blocklist, THEN THE User_Service SHALL reject it with a validation error and SHALL NOT persist the account change.
 
 ### Requirement 5: Create User
 
@@ -130,7 +132,7 @@ The requirements below emphasize **testability**: acceptance criteria are writte
 1. WHEN the User_Service receives a delete request from an Administrator for an existing username, THE User_Service SHALL remove the matching User_Record from the User_Store and SHALL return a success response.
 2. WHEN the User_Service removes a User_Record, THE User_Service SHALL also remove that user from any in-memory permission cache.
 3. IF the User_Service receives a delete request for a username that does not exist, THEN THE User_Service SHALL return an error identifying the missing username.
-4. WHEN a User_Record has been deleted, THE Authentication_Service SHALL reject subsequent sign-in requests for that username with HTTP status 404.
+4. WHEN a User_Record has been deleted, THE Authentication_Service SHALL reject subsequent sign-in requests for that username with the same generic HTTP status 401 response as any other unknown username (per AC-1.2). *(Refined by DV-006 in lockstep with AC-1.2: was HTTP 404; a deleted username is now indistinguishable from a never-existing one.)*
 5. IF the User_Service receives a delete request for the last remaining administrator account, THEN THE User_Service SHALL reject the request with an error identifying that the last administrator cannot be deleted and SHALL NOT remove the account.
 
 ### Requirement 9: Role Management (RBAC)
@@ -212,10 +214,11 @@ The requirements below emphasize **testability**: acceptance criteria are writte
 #### Acceptance Criteria
 
 1. WHILE the count of consecutive failed sign-in attempts for a username is below the configured threshold, THE Authentication_Service SHALL process each sign-in attempt normally.
-2. IF the count of consecutive failed sign-in attempts for a username reaches the configured threshold, THEN THE Authentication_Service SHALL reject further sign-in attempts for that username for the configured lockout duration with HTTP status 429.
+2. IF the count of consecutive failed sign-in attempts for a username reaches the configured threshold, THEN THE Authentication_Service SHALL apply an adaptive throttle to further sign-in attempts for that username — rejecting them with HTTP status 429 and a `retryAfter` hint that increases with continued failures (exponential backoff) up to an optional configured maximum interval — rather than a single fixed-duration hard lockout. *(Refined by DV-008: adaptive throttling replaces the hard fixed-duration lockout to resist attacker-induced lockout of a legitimate operator, per NIST SP 800-63B; a configured maximum interval MAY still bound the backoff.)*
 3. WHERE the configured threshold is zero, THE Authentication_Service SHALL reject every sign-in attempt for every username with HTTP status 429.
-4. WHEN a sign-in attempt for a username succeeds, THE Authentication_Service SHALL reset the consecutive failed-attempt count for that username to zero.
-5. WHEN the configured lockout duration for a username elapses, THE Authentication_Service SHALL again process sign-in attempts for that username normally.
+4. WHEN a sign-in attempt for a username succeeds, THE Authentication_Service SHALL reset the consecutive failed-attempt count and the adaptive-throttle interval for that username to zero.
+5. WHEN the current adaptive-throttle interval for a username elapses without a further failed attempt, THE Authentication_Service SHALL again process sign-in attempts for that username normally.
+6. WHERE the deployment runs more than one Authentication_Service instance, THE brute-force counter state SHALL be resolvable from a shared store so that the effective threshold is not multiplied by the instance count; AND the adaptive throttle SHALL be bounded (each individual block interval finite, cleared on success or interval elapse) so that a party who knows a username cannot lock out the legitimate operator indefinitely. *(Added by DV-008 + N-019: multi-instance consistency and targeted-DoS resistance.)*
 
 ### Requirement 16: Modular Architecture
 

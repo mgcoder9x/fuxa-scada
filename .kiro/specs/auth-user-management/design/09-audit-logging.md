@@ -79,7 +79,7 @@ graph LR
   RoleSvc["Role_Service<br/>(REQ-9 · §05)"] -->|record| AL
   AuthZ["Authorization_Service<br/>(REQ-10 · §05)"] -->|record| AL
   Boot["Bootstrap<br/>(REQ-17 · §12, consumer)"] -.record.-> AL
-  AL["Audit_Logger<br/>record(event)"] -->|Audit_Sink| SINK["FUXA winston logger<br/>server/runtime/logger.js → logDir/*.log"]
+  AL["Audit_Logger<br/>record(event)"] -->|Audit_Sink| SINK["Dedicated append-only audit sink (D-023)<br/>module-owned winston File → logDir/fuxa-audit.log<br/>(DB / SIEM optional; independent rotation)"]
 ```
 
 ---
@@ -121,9 +121,26 @@ Audit_Event = {
   operation?: string,          // the operation id where applicable (CRUD verb / requested op)
   outcome:    string,          // stable outcome identifier (mirrors the caller's outcome id)
   timestamp:  string,          // ISO-8601 instant, SUPPLIED BY THE CALLER (see §2.3)
-  detail?:    string           // optional, pre-sanitized free-text (error id / reason). No PII beyond subject.
+  detail?:    string,          // optional, pre-sanitized free-text (error id / reason). No PII beyond subject.
+
+  // --- richer forensic fields (D-023; all OPTIONAL, caller-supplied, secret-free) ---
+  actor?:         string,      // the authenticated identity performing the action (username / 'guest' / 'system')
+  target?:        string,      // the entity acted upon when distinct from `subject` (e.g. the user/role being changed)
+  sourceIp?:      string,      // client IP as seen by the API layer (for forensics; caller-supplied)
+  device?:        string,      // user-agent / device descriptor, truncated & sanitized by the caller
+  sessionId?:     string,      // session / token `jti` reference (NOT the token itself)
+  correlationId?: string,      // request/correlation id to stitch an event to its API call
+  changes?:       { field: string, from?: string, to?: string }[]  // before/after for CRUD (values pre-sanitized; never a secret)
 }
 ```
+
+> **Richer fields are additive and OPTIONAL (D-023).** The five REQ-14 core fields
+> (`category`/`subject`/`operation`/`outcome`/`timestamp`) remain the only *required* ones, so every
+> existing emission point and test is unaffected. The optional forensic fields let a deployment build
+> a commercial-grade audit trail (who, from where, on what, what changed) without changing the
+> `record` contract. They are still **caller-supplied and secret-free** — the AC-14.5 rules
+> ([§5](#5-ac-145-two-part-secret-exclusion-obligation)) apply unchanged to every field, including
+> `changes[].from/to` (a caller MUST NOT place a password/hash into a before/after value).
 
 **There is no `password`, `passwordHash`, `token`, `secret`, or `credentials` field anywhere in
 `Audit_Event`.** This is the *structural* half of AC-14.5: a secret cannot be recorded as a
@@ -274,37 +291,49 @@ each calling service shall sanitize … before sending."*
   `utils.getRetentionLimit(logs.retention)` (supported windows: `day1`…`year5`, verified in
   `server/runtime/utils.js`).
 
-### 6.2 Decision: reuse FUXA's winston logger via a module-owned `Audit_Sink`
+### 6.2 Decision (D-023): a dedicated, append-only audit sink separate from the application log
 
-**Decision.** The default audit sink **reuses FUXA's existing winston logger** rather than
-introducing a new logging dependency. This follows the master map's reuse-primitives stance
-(**D-002 / TO-001**) and the no-core-edits boundary (**D-003**): the module defines a thin
-`Audit_Sink` interface and a default implementation that calls the FUXA logger's public
-`info(...)` method (routing audit lines to `${logDir}/fuxa.log`). FUXA core (`logger.js`) is
-**not edited**.
+**Decision (D-023, supersedes the earlier "reuse the shared `fuxa.log`" default).** The default
+audit sink is a **dedicated, append-only sink separate from `fuxa.log`** — a module-owned winston
+`File` transport at `${logDir}/fuxa-audit.log` (with a DB-backed or SIEM-shipping implementation
+selectable behind the same interface). Audit records **no longer share** the ordinary application
+log's `1 MB × 5` rotation, so security events cannot be aged out by unrelated `info` volume, and an
+`info`-log disk pressure event cannot evict the audit trail. This still introduces **no new
+dependency** (winston is already present, §6.1) and **no FUXA core edit** (**D-003**): it is an
+additional transport registered *within the module's composition root*.
 
 ```
-interface Audit_Sink { write(line: string): void }   // default: (line) => fuxaLogger.info(line, /*notConsoleLog*/ true)
+interface Audit_Sink {
+  write(line: string): void            // append one AUDIT line to the dedicated sink
+  health(): { ok: boolean, lastError?: string, lastWriteOk?: string }   // §7 health signal (D-023)
+}
+// default: a module-owned winston File transport at ${logDir}/fuxa-audit.log
+//          (level 'info', its OWN maxsize/maxFiles/retention, independent of fuxa.log)
 ```
 
 **Justification and trade-off.**
 
-- **Reuse over reinvention.** No new transport, dependency, or config surface; audit records
-  inherit FUXA's existing `logDir`, rotation, and the `cleanupLogs` retention job for free — a
-  deployment that sets `logs.retention` automatically ages audit lines too (verified path,
-  §6.1).
-- **Greppability.** The `AUDIT ` marker + JSON payload ([§6.3](#63-record-format-structured-json-line))
-  makes audit lines trivially separable from ordinary `info` lines with a single `grep AUDIT`,
-  even though they share `fuxa.log`.
-- **Known limitation (flagged, N-audit-1).** Mixing audit lines into `fuxa.log` means they share
-  the **1 MB × 5** rotation; under high log volume, audit history can rotate out faster than a
-  compliance window may require. For deployments needing durable audit retention, the module
-  **MAY** register an **additional, module-owned** winston `File` transport at
-  `${logDir}/fuxa-audit.log` (or a DB-backed sink) *within the module's composition root* — this
-  is an additive sink swap behind the `Audit_Sink` interface and still requires **no** edit to
-  FUXA core. Because it lives under `logDir`, it remains covered by `cleanupLogs`. Choosing the
-  durable sink is a deployment decision recorded for the Tasks phase; the default remains the
-  shared logger.
+- **Audit integrity is a control, not a convenience (D-023).** For a commercial IAM the audit trail
+  must survive independently of debug/info logging: a separate sink gives it its own rotation and
+  retention policy so a compliance window is not silently truncated by log volume (the N-audit-1
+  limitation, now resolved rather than merely flagged).
+- **Independent, configurable retention.** The dedicated transport carries its **own**
+  `maxsize`/`maxFiles` (and MAY opt out of `cleanupLogs` age-deletion or set a longer window),
+  decoupling audit retention from `logs.retention`. Defaults are set generously for audit
+  (recommended ≥ the deployment's compliance window); values are a deployment decision recorded for
+  the Tasks phase.
+- **Greppability preserved.** The `AUDIT ` marker + JSON payload ([§6.3](#63-record-format-structured-json-line))
+  is retained, so `grep AUDIT ${logDir}/fuxa-audit.log` isolates the trail; the `category`
+  discriminator filters by event type.
+- **Tamper-evidence (optional, D-023).** The sink MAY be configured for **append-only / WORM**
+  semantics and an optional **hash-chain** (each line carries `prevHash`/`hash` over the canonical
+  event) so post-hoc tampering is detectable, or ship to an external SIEM. These are opt-in
+  implementations behind the `Audit_Sink` interface; the default file transport provides
+  filesystem-level protection only. The `record(event)` contract and every emission point are
+  unchanged regardless of which sink is selected.
+- **Fallback.** If the dedicated transport cannot be constructed at startup, the composition root
+  MAY fall back to the shared `fuxaLogger.info(...)` transport (the prior behavior) so audit is never
+  silently *off*; the fallback is itself surfaced through `health()` ([§7](#7-non-blocking-guarantee)).
 
 ### 6.3 Record format: structured JSON line
 
@@ -334,10 +363,17 @@ error"; and honored at every `record(...)` emission point in [`04-user-managemen
 
 **How it is enforced.**
 
-1. **`record` never throws to the caller.** Its entire body runs inside a `try/catch` that
-   **swallows** any sink error; on failure it writes an *internal* diagnostic to the FUXA
-   **error** channel (`fuxaLogger.error(...)` → `${logDir}/fuxa-err.log`, verified) and returns
-   normally. The failure is thus itself observable (in the error log) without propagating.
+1. **`record` never throws to the caller, but a failed audit write is a health signal, not a
+   silent swallow (D-023).** Its entire body runs inside a `try/catch` so a sink error never
+   propagates into the domain operation. On failure it (a) writes an *internal* diagnostic to the
+   FUXA **error** channel (`fuxaLogger.error(...)` → `${logDir}/fuxa-err.log`, verified), **and**
+   (b) records the failure in the sink's `health()` state (last error + a monotonically-updated
+   "audit degraded" flag) so operators/monitoring can detect that the audit trail is not being
+   written — treating audit-write failure as an **observable health signal** rather than a swallowed
+   log line. The domain outcome is still unaffected (non-blocking), but "audit is down" is no longer
+   invisible. A deployment MAY additionally configure the health flag to surface on a health/metrics
+   endpoint or, for the strictest posture, to fail the operation closed — that is an explicit,
+   deployment-opted policy, off by default (default remains non-blocking per REQ-14).
 2. **Fire-and-forget at the call site.** Emission points call `record(event)` as a side-effecting
    statement whose result is ignored; they never `await` a value from it and never branch on it.
    The domain outcome is already decided before (or independently of) the audit call.
@@ -364,12 +400,12 @@ error"; and honored at every `record(...)` emission point in [`04-user-managemen
 - **Timestamps.** Every record carries a caller-stamped ISO-8601 `timestamp`
   ([§2.3](#23-time-is-a-caller-supplied-field-reconciling-ac-141-144-time-with-ac-145)); the sink
   additionally line-stamps via winston's `format.timestamp()` (verified).
-- **Tamper-evidence considerations (non-blocking scope note).** REQ-14 requires *recording*
-  events, not cryptographic tamper-proofing. The default file sink inherits filesystem-level
-  protections only; strong tamper-evidence (append-only store, hash-chaining, or shipping to an
-  external SIEM) is **out of scope for REQ-14** and, if required by a deployment, is realized as
-  an alternate `Audit_Sink` implementation ([§6.2](#62-decision-reuse-fuxas-winston-logger-via-a-module-owned-sink),
-  N-audit-1) — no change to the `record(event)` contract or the emission points.
+- **Dedicated sink + tamper-evidence (D-023).** Audit now writes to a **dedicated, append-only
+  sink** independent of `fuxa.log` with its own retention ([§6.2](#62-decision-d-023-a-dedicated-append-only-audit-sink-separate-from-the-application-log)),
+  so the trail is not aged out by unrelated log volume. Strong tamper-evidence (append-only/WORM,
+  hash-chaining, or SIEM shipping) is an **opt-in** `Audit_Sink` implementation — no change to the
+  `record(event)` contract or the emission points. REQ-14 still only mandates *recording*; the
+  dedicated sink and tamper-evidence exceed it as commercial-grade controls.
 - **Error handling.** The only failure mode internal to this component is a **sink write failure**
   (disk full, transport error). It is handled by the swallow-and-internally-log rule
   ([§7](#7-non-blocking-guarantee)) — never surfaced to the domain caller, always visible in
@@ -471,16 +507,36 @@ line is captured without touching the filesystem.
 
 ### 10.3 Integration tests (1–3 representative examples)
 
-End-to-end through the real default sink against FUXA's winston logger writing to a temporary
-`logDir`:
+End-to-end through the real default **dedicated** sink (D-023) writing to a temporary `logDir`:
 
-- A real sign-in and a real user create produce two lines in `${logDir}/fuxa.log`, each beginning
-  with `AUDIT ` and parseable to the expected `category`/`subject`/`outcome`/`timestamp`.
-- A forced sink error (unwritable `logDir`) leaves the domain operation's HTTP result unchanged and
-  produces an entry in `${logDir}/fuxa-err.log`.
+- A real sign-in and a real user create produce two lines in `${logDir}/fuxa-audit.log` (the
+  **dedicated** audit file, not `fuxa.log`), each beginning with `AUDIT ` and parseable to the
+  expected `category`/`subject`/`outcome`/`timestamp`.
+- A forced sink error (unwritable `logDir`) leaves the domain operation's HTTP result unchanged,
+  produces an entry in `${logDir}/fuxa-err.log`, **and** flips `Audit_Sink.health().ok` to `false`
+  with a `lastError` (the health-signal path, §7/D-023).
 
-These integration cases verify the **wiring** (service → `Audit_Logger` → FUXA logger → file);
+These integration cases verify the **wiring** (service → `Audit_Logger` → dedicated sink → file);
 they are intentionally few.
+
+### 10.4 Dedicated-sink & health-signal tests (D-023)
+
+1. **Separation from the app log.** With a temporary `logDir`, emit audit events and unrelated
+   `info` lines; assert audit `AUDIT ` lines land in `${logDir}/fuxa-audit.log` and **not** in
+   `${logDir}/fuxa.log`, and that the audit file carries its own rotation config independent of
+   `fuxa.log`.
+2. **Health signal on failure.** Inject a sink whose `write` throws; call `record`; assert the
+   caller's domain outcome is unchanged (non-blocking) **and** `health().ok === false` with a
+   populated `lastError` (D-023 observable-failure requirement).
+3. **Richer fields pass through + stay secret-free.** Record an event carrying `actor`/`target`/
+   `sourceIp`/`correlationId`/`changes`; assert the serialized line round-trips those fields and
+   still contains neither a plaintext password nor a hash (AC-14.5 applies to `changes[].from/to`).
+4. **Optional hash-chain (when enabled).** With the hash-chain sink option on, assert consecutive
+   lines carry linked `prevHash`/`hash` and that altering a middle line breaks the chain
+   verification (tamper-evidence).
+5. **Fallback path.** Simulate dedicated-transport construction failure at startup; assert the sink
+   falls back to `fuxaLogger.info` and that `health()` reports the degraded/fallback state (audit is
+   never silently off).
 
 ---
 
@@ -513,9 +569,12 @@ phase. Until then, AC-14.5's secret exclusion is verified by the example/edge te
 | AC-14.3 | role create/update/delete → record operation, affected role name, time | emission in `05-rbac-authorization.md` §3.3/§3.5/§3.6; sink = `logger.info` | example |
 | AC-14.4 | authorization denial → record identity, requested operation, time | denial decision in `05-rbac-authorization.md` §4.2; sink = `logger.info` | example |
 | AC-14.5 | logger records only caller-supplied fields; callers sanitize passwords/hashes before sending | secret-free `Audit_Event` (§2.2/§5.1) + caller contract (§5.2, D-004/D-004c); sink format `json:false` printf in `server/runtime/logger.js` | example (no-enrichment) + edge (secrets-never-logged) |
+| D-023 (control) | dedicated append-only audit sink separate from `fuxa.log`; richer optional fields; audit-write failure as a health signal; optional hash-chain/WORM | winston `File` transport (already a dependency, §6.1); `logDir` boundary (`server/settings.default.js`) | §10.4 dedicated-sink + health-signal + hash-chain tests |
 
-No orphan criteria: AC-14.1 … AC-14.5 each map to at least one test above. This section maps back
-to REQ-14 only, matching [`../decisions/traceability.md`](../decisions/traceability.md) §A/§B
-(`DES-AUDIT → REQ-14`) and the master-map Table of Contents (DES-AUDIT owns no properties). The
-storage/retention claims are grounded in `server/runtime/logger.js`, `server/settings.default.js`
-(`logDir '_logs'`, `logs.retention 'none'`), and `server/runtime/jobs/cleaner.js` (`cleanupLogs`).
+No orphan criteria: AC-14.1 … AC-14.5 each map to at least one test above; D-023's controls map to
+§10.4. This section maps back to REQ-14 only, matching
+[`../decisions/traceability.md`](../decisions/traceability.md) §A/§B (`DES-AUDIT → REQ-14`) and the
+master-map Table of Contents (DES-AUDIT owns no properties). The storage/retention claims are
+grounded in `server/runtime/logger.js`, `server/settings.default.js` (`logDir '_logs'`,
+`logs.retention 'none'`), and `server/runtime/jobs/cleaner.js` (`cleanupLogs`); the dedicated audit
+sink (D-023) carries its own independent rotation/retention.

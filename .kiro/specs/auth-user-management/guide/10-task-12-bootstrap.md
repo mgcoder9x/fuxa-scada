@@ -3,6 +3,15 @@
 > Tương ứng **Task 12** trong `../tasks.md`. Requirement: 17.1–17.5, 8.5 (P-010).
 > Thiết kế: `../design/12-admin-bootstrap.md`. Sở hữu **P-009**, đồng sở hữu **P-010**.
 
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-022 & D-018
+> - **D-022 (task 12.7, fixes N-018):** secret seed/xoay vòng **TUYỆT ĐỐI KHÔNG** ghi ra `fuxa.log`/
+>   `runtime.logger`/console. Giao qua **kênh enrollment an toàn**: mặc định **CLI tương tác** first-run đặt
+>   secret tại console được kiểm soát; provisioning tự động dùng **one-time enrollment token** (TTL ngắn,
+>   hash-at-rest, single-use). Nếu guide cũ bảo `logger.info` in secret ra — **BỎ**, đó là rò rỉ credential.
+> - **D-018 (task 12.2 + router 13.7, fixes N-013):** thao tác đổi mật khẩu bắt buộc có endpoint HTTP
+>   **`POST /api/account/rotate-password`** (nếu không, admin bị `mustRotate` sẽ deadlock). Khi rotate thành công:
+>   clear `mustRotate` **và** bump **`tokenVersion`** (D-015). Xem `../design/12` §3.2/§4.1.
+
 ## Mục tiêu
 
 Khi khởi động: nếu **chưa có admin nào**, gieo **đúng một** admin với **mật khẩu ngẫu nhiên một lần**

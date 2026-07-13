@@ -1,7 +1,16 @@
 # 03 — Task 3: Password_Hasher (băm mật khẩu)
 
-> Tương ứng **Task 3** trong `../tasks.md`. Requirement: 4.1, 4.2, 4.3, 4.4, 4.5.
+> Tương ứng **Task 3** trong `../tasks.md`. Requirement: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7.
 > Thiết kế: `../design/03-password-security.md`. Sở hữu property **P-001, P-002**.
+
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-017 / DV-007
+> bcrypt **cắt input ở 72 byte**, nên phát biểu P-002 cũ ("mọi A≠B đều reject") là **SAI** cho input >72 byte
+> (defect **N-012**). Sửa:
+> - **P-002 chỉ phát biểu trên domain ≤72 byte UTF-8.** Generator test **không** được dùng cặp near-duplicate
+>   dài >72 byte để "ép" test pass — nếu chung 72 byte đầu, bcrypt coi là giống nhau.
+> - Mật khẩu **>72 byte UTF-8 bị từ chối** ở tầng validate `User_Service` (**AC-4.6**); thêm min-length +
+>   blocklist (**AC-4.7**). Xem `../design/03` §2.2/§7/§8.1 và `../design/04` §2.3.
+> - Lưu **`hashScheme`** version marker để sau này chuyển Argon2id không vỡ verify.
 
 ## Mục tiêu
 

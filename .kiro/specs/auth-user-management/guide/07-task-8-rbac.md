@@ -1,7 +1,16 @@
 # 07 — Task 8: RBAC (vai trò & phân quyền)
 
 > Tương ứng **Task 8** trong `../tasks.md`. Requirement: 9.1–9.5, 10.1–10.5, 17.2.
-> Thiết kế: `../design/05-rbac-authorization.md`. Sở hữu **P-006, P-011** và **định nghĩa admin** dùng chung.
+> Thiết kế: `../design/05-rbac-authorization.md`. Sở hữu **P-006, P-011, P-013** và **định nghĩa admin** dùng chung.
+
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-015 (thẩm quyền theo bản ghi sống)
+> Bản cũ dựng `Identity.roles/groups` từ **claim trong token** — user bị xóa/hạ quyền vẫn giữ quyền tới khi token
+> hết hạn (defect **N-011**). Sửa (task 8.2, property **P-013** tại 8.6):
+> - `Authorization_Service`/middleware dựng `Identity` từ **bản ghi `User_Record` sống** đọc qua `User_Store`
+>   (`getUserCache`): roles/groups/`mustRotate`/**sự tồn tại** đều lấy từ store, **không** từ token.
+> - Kiểm **`tokenVersion`**: token đóng dấu phiên bản cũ hơn phiên bản hiện tại của tài khoản ⇒ **từ chối**
+>   (thu hồi chủ động khi logout/đổi mật khẩu/đổi vai trò/disable). Token `roles`/`groups` chỉ để tương thích.
+> - Xem `../design/05` §4.1 và `../design/02` §3.
 
 ## Mục tiêu
 

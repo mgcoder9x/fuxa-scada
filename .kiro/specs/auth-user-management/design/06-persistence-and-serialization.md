@@ -157,8 +157,8 @@ except for the one verbatim-hash write ([§5](#5-the-double-hash-hazard-resoluti
 |------------------|------------------------------------------------------|----------------------------------------------|
 | `User_Store.get(username)` | `getUsers({ username })` / `findOne({ username })` | `SELECT username, fullname, password, groups, info FROM users WHERE username = ?` |
 | `User_Store.readAll()` | `getUsers()` | `SELECT username, fullname, password, groups, info FROM users` |
-| `User_Store.create/update` (non-secret cols) | `setUsers({ username, fullname, groups, info })` | `setUser(...)` → `INSERT OR REPLACE` / `UPDATE` (see §5) |
-| `User_Store.create/update` (password col) | **adapter-owned verbatim write** (§5) | `UPDATE users SET password = ? WHERE username = ?` |
+| `User_Store.create/update` (**all columns, atomic**) | **adapter-owned single transaction** (§5, D-016) | `INSERT`/`UPDATE … password` verbatim, one `BEGIN…COMMIT` on the adapter's own connection |
+| `User_Store.create/update` (**cache refresh only**) | `setUsers({ username, fullname, groups, info })` with `password` omitted | idempotent non-secret re-write (pwd-falsy branch) + `usersMap.set(username,{info,groups})` |
 | `User_Store.delete(username)` | `removeUsers(username)` | `DELETE FROM users WHERE username = ?` + `usersMap.delete(username)` |
 | `Role_Store.get(id)` | filter of `getRoles()` | `SELECT value FROM roles` |
 | `Role_Store.readAll()` | `getRoles()` | `SELECT value FROM roles` |
@@ -356,55 +356,107 @@ If the adapter passed the module's hash as `pwd`, the stored value would be
 `bcrypt.compare`) would **never** match — breaking sign-in (AC-1.5) and the hashing properties
 P-001/P-002. This is the double-hash hazard.
 
-### 5.2 Chosen resolution — verbatim password write that bypasses `setUser`'s re-hash path
+### 5.2 Chosen resolution (D-016, revised 2026-07-13) — one atomic full-row write, then a best-effort cache refresh
 
-**Decision.** The `FuxaUserStoreAdapter` **never passes the password to `setUser`.** It persists
-a `User_Record` in two coordinated steps:
+> **Supersedes the original two-connection scheme (defect N-010).** The original design split the
+> write across FUXA's connection (non-secret columns) and the adapter's connection (password) and
+> then claimed §5.4 wrapped both in **one** transaction — which is **impossible across two
+> connections**. D-016 (user-approved 2026-07-13, option (a)) replaces it with a single-connection,
+> single-transaction full-row write so the **credential-bearing** state is genuinely atomic.
 
-1. **Non-secret columns via FUXA (cache-coherent).** Call `runtime.users.setUsers({ username,
-   fullname, groups, info })` **with `password` omitted**. This drives `setUser`'s **pwd-falsy**
-   branch (verified above): for an existing row it runs `UPDATE users SET groups=?, info=?,
-   fullname=? WHERE username=?` (the `password` column is *not* in the SET list, so any existing
-   hash is retained); for a new row it runs `INSERT OR REPLACE INTO users (username, fullname,
-   groups, info) VALUES(?, ?, ?, ?)` (leaving `password` NULL). Crucially, `runtime.users.setUsers`
-   also updates the in-memory permission cache — `usersMap.set(username, { info, groups })`
-   (verified) — so the cache stays coherent.
-2. **Password column via a dedicated verbatim write.** When the write carries a `passwordHash`
-   (create, or update-with-new-password), the adapter issues a single **parameterized** statement
-   `UPDATE users SET password = ? WHERE username = ?` binding the bcrypt hash **verbatim** into
-   the `password TEXT` column. No `bcrypt.hashSync` is applied — the value stored is exactly the
-   hash `Password_Hasher.hash` produced. When the write **omits** `passwordHash` (update that
-   retains the password, AC-7.3), the adapter **skips step 2 entirely**, so the existing hash
-   left intact by step 1 is retained.
+**Verified constraint (why the adapter owns its own connection).** `server/runtime/users/index.js`
+exports only `getUsers / setUsers / removeUsers / getRoles / setRoles / removeRoles / findOne /
+getUserCache`, and `usrstorage.js` exposes **no raw-SQL or db-handle API** (verified 2026-07-13).
+There is therefore **no public path to run a custom `UPDATE … password` inside FUXA's own
+connection/transaction**. The adapter MUST own a dedicated `sqlite3` connection to
+`users.fuxap.db` (opened once; `PRAGMA journal_mode=WAL` and a `PRAGMA busy_timeout` set so it
+coexists with FUXA's own connection) for the write it needs to control.
 
-### 5.3 Why this option (justification vs. the alternative)
+**Decision.** `FuxaUserStoreAdapter.create/update` performs:
 
-The task's two candidate options were (a) bypass `setUser` with direct parameterized SQL, or
-(b) add a store method that persists the hash verbatim. The chosen design is essentially **(a)
-scoped to the single `password` column**, and it is preferred because:
+1. **One atomic full-row write (adapter's own connection, one transaction).** `BEGIN` → for a new
+   user `INSERT INTO users (username, fullname, password, groups, info) VALUES(?,?,?,?,?)`; for an
+   existing user `UPDATE users SET fullname=?, groups=?, info=?, password=? WHERE username=?` — or
+   the **same `UPDATE` without the `password` column** when `passwordHash` is omitted (retain-on-omit,
+   AC-7.3) → `COMMIT`. The bcrypt hash is bound **verbatim**; because this is the adapter's own SQL
+   and never routes through `usrstorage.setUser`, it is **not re-hashed** (the double-hash hazard is
+   avoided). All columns are written in the **same transaction**, so a crash leaves either the whole
+   prior row or the whole new row — never fresh metadata paired with a stale/NULL password.
+2. **Best-effort cache refresh (FUXA public API).** After the COMMIT, the adapter calls
+   `runtime.users.setUsers({ username, fullname, groups, info })` **with `password` omitted**. This
+   drives `setUser`'s verified **pwd-falsy** branch — an **idempotent** re-write of the non-secret
+   columns to the values just committed (the `password` column is not in that SET list, so the
+   verbatim hash from step 1 is preserved) — and, crucially, updates the in-memory permission cache
+   `usersMap.set(username, { info, groups })` (verified). This is the **only** public FUXA API that
+   refreshes `usersMap` for a single user without re-hashing a password.
 
-- **It preserves cache coherence for free.** The verified permission cache `usersMap` stores
-  **only** `{ info, groups }` — it never holds the password (verified in `setUsers` and
-  `_loadUsers`). Driving `info`/`groups` through FUXA's `setUsers` keeps the cache correct
-  (needed by REQ-10 authorization), while the separate password write touches a column the cache
-  does not mirror, so no desync is possible. Option (b), if it re-implemented the whole row write
-  in the adapter, would have to duplicate the cache update — more surface, more drift.
-- **It respects the D-003 boundary.** It edits **no** FUXA core file: `setUser`/`setUsers` are
-  used exactly as shipped (via their existing pwd-falsy path), and the only adapter-owned SQL is
-  a minimal, parameterized, single-column `UPDATE` against FUXA's existing schema. Future FUXA
-  upgrades to `runtime/users` merge cleanly (N-001).
-- **It minimizes the bespoke surface.** Exactly one column (`password`) is written outside FUXA;
-  everything else — including the resilient `info` handling and the roles table — flows through
-  verified FUXA code paths.
+**Why the ordering is now safe (inverse of the old design).** The credential-bearing persistent
+state is complete and consistent after step 1's COMMIT. Step 2 is a **cache refresh only**: it
+writes identical non-secret values (idempotent) and updates `usersMap`. If step 2 fails, or the
+process crashes between the two steps, the **database row is already correct**; only the in-memory
+cache is momentarily stale, which self-heals on the next `_loadUsers` (restart) and does **not**
+affect module authorization under **D-015** (the module re-resolves authority from the store via
+`User_Store.get()`, not the cache). Contrast the old design, where the *credential* write was the
+non-atomic one — the exact failure N-010 describes.
+
+> **Residual concurrency note (multi-process).** Two connections write the same file (FUXA at
+> seed/startup, the adapter at module writes); WAL + `busy_timeout` make this safe **within a single
+> process**. Cross-process/HA write coordination is out of scope here and is owned by **D-020**
+> (atomic invariants / serialized writer) — this section does not claim multi-node atomicity.
+
+### 5.3 Why this option (justification vs. a dedicated IAM datastore)
+
+Two candidate resolutions were weighed under **TO-001 / D-016**: **(a)** the adapter owns the full
+users-row write in one transaction on its own connection (chosen), or **(b)** move IAM persistence
+to a dedicated datastore with real transactions and unique constraints. Option (a) is chosen for
+now because:
+
+- **True atomicity of the credential write.** All five columns — including the verbatim password —
+  are committed in a single `BEGIN…COMMIT`, so no crash can persist a half-written credential
+  (root fix for N-010). This is the property §5.4 requires and the old two-connection scheme could
+  not deliver.
+- **It keeps a single credential store (TO-001 / D-002).** No new datastore, no migration of
+  existing FUXA users, and no divergence for FUXA endpoints that still read `runtime/users`
+  directly.
+- **It respects the D-003 boundary.** It edits **no** FUXA core file: the adapter uses its own
+  connection against FUXA's existing schema, and `runtime.users.setUsers` is called **only** for
+  its cache-update side-effect (via the shipped pwd-falsy path). Future FUXA `runtime/users`
+  upgrades still merge cleanly (N-001).
+- **The added cost is bounded and testable.** The adapter now owns the write SQL and triggers one
+  idempotent cache-refresh call; the cache-coherence behavior is asserted directly by a test (§9).
+
+**Cost / residual accepted (honest).** The adapter must know FUXA's `users` column set (a schema
+coupling: if FUXA later adds a NOT-NULL column without a default, the adapter's `INSERT` needs
+updating — flagged as a maintenance note). The cache refresh is best-effort; a stale cache after a
+step-2 failure is tolerated because it self-heals (`_loadUsers` on restart) and the module reads
+authority from the store (D-015). Option (b) remains the **escalation path** if the cache-coherence
+replication proves fragile, or if D-019 (refresh-token store) / D-020 (cross-cutting concurrency)
+make a dedicated transactional IAM database clearly worthwhile — at which point TO-001 is formally
+revisited.
 
 ### 5.4 Ordering, atomicity, and read-back
 
-- **Ordering.** Step 1 precedes step 2 so that, for a new user, the row exists before the
-  `password` `UPDATE` targets it. Both steps key on the same normalized `username`.
-- **Atomicity.** The two writes SHALL execute within a single transaction on the users database
-  so a crash between them cannot leave a row with a NULL/stale password paired with fresh
-  non-secret columns. (SQLite `BEGIN … COMMIT` around steps 1–2; on error the adapter rejects and
-  rolls back, surfacing a store error per the master-map Error Handling table.)
+- **Ordering.** Step 1 (the atomic full-row write) precedes step 2 (cache refresh) so the row is
+  fully committed before `usersMap` is refreshed. Both steps key on the same normalized `username`.
+- **Atomicity (root fix for N-010).** The full-row write — all columns **including** the verbatim
+  `password` — SHALL execute within **one transaction on the adapter's single connection**
+  (`BEGIN … COMMIT`; on error the adapter rolls back and rejects, surfacing a store error per the
+  master-map Error Handling table). This guarantees no crash can persist fresh non-secret columns
+  paired with a NULL/stale password. The step-2 `setUsers(password omitted)` cache refresh is
+  **outside** this transaction by design: it is idempotent and touches no credential state, so its
+  failure cannot corrupt the persisted row (only the in-memory cache, which self-heals). The old
+  requirement of "wrap the two writes in one transaction" is **retired** — it was unsatisfiable
+  across two connections (N-010); atomicity is now achieved by making the single credential-bearing
+  write itself transactional.
+- **Concurrency invariants at the DB (D-020, fixes N-016).** The adapter's own transactional
+  connection is also the enforcement point for two invariants that a read-then-act service check
+  cannot hold under interleaving: **(a) unique create** — `create` uses a **plain `INSERT`** on the
+  `username` PRIMARY KEY (never `INSERT OR REPLACE`), so a concurrent duplicate fails with a
+  PK-conflict the adapter maps to `duplicate_username` (atomic; §04 §3.2); **(b) last-admin guard**
+  — the `User_Service`'s count → guard → delete runs inside a single **`BEGIN IMMEDIATE`**
+  transaction (SQLite write-lock), serializing concurrent deletes so the store can never reach zero
+  admins (§04 §6.5). Both are quantified by property **P-016** over interleaved histories. (Multi-
+  process HA still requires D-016 option (b).)
 - **Read-back excludes the hash.** On read, `User_Store` returns the `passwordHash` field to the
   Service layer only where a hash comparison is needed (sign-in, §01); the **`UserView`** the
   User_Service returns to API callers has no hash field at all (AC-6.2, owned by §04 §4.2). The

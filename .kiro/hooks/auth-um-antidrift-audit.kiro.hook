@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Auth Module — Anti-Drift Audit",
+  "description": "Runs the full anti-drift + integrity audit for the auth-user-management spec: verifies the decisions ledger integrity manifest, ID high-water marks, traceability orphans, and the open design-defect gate.",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Run the anti-drift audit for the `auth-user-management` spec. Steps, in order:\n1. Read `.kiro/specs/auth-user-management/decisions/00-INDEX.md` and execute its §4 Integrity Check: for every file in the §1 manifest, confirm it exists and contains all its required structural markers and NO content from another file's domain (e.g. a chat transcript in a ledger file). Report any file that fails.\n2. Verify the ID high-water marks in `00-INDEX.md` §2: confirm each `D-`/`DV-`/`TO-`/`N-`/`P-` sequence is monotonic, has no reused IDs, and that `TO-003` remains QUARANTINED.\n3. Reconcile `traceability.md`: every REQ/AC maps forward to a DES; every DES maps back to a REQ; report orphans. Check whether §D (Design→Task→Test) is populated.\n4. Report the status of the Design-Defect Register (traceability §F): list which of N-010…N-019, N-021 are still OPEN vs RESOLVED, and confirm no module code exists while CRITICAL defects are OPEN (gate G4).\n5. Output a concise PASS/FAIL summary per check and, on any FAIL, propose the exact remediation (and open an incident entry in `00-INDEX.md` §3 + `04-notes.md` if integrity failed). Do NOT edit design/requirements to \"fix\" defects without user approval."
+  }
+}

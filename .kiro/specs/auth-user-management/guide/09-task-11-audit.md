@@ -3,6 +3,14 @@
 > Tương ứng **Task 11** trong `../tasks.md`. Requirement: 14.1–14.5.
 > Thiết kế: `../design/09-audit-logging.md`. Không sở hữu property (test kiểu ví dụ).
 
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-023 (audit sink chuyên dụng)
+> Bản cũ ghi audit chung vào `fuxa.log` (chia sẻ rotation 1 MB×5) và **nuốt im** lỗi ghi. Sửa (task 11.1/11.4):
+> - **Sink chuyên dụng append-only** `${logDir}/fuxa-audit.log` (winston File riêng, rotation/retention **độc lập**
+>   với `fuxa.log`; cho phép DB/SIEM) — sự kiện an ninh không bị log thường đẩy trôi.
+> - Thêm field forensic **tùy chọn, secret-free** (actor/target/sourceIp/device/sessionId/correlationId/changes[]).
+> - Lỗi ghi audit ⇒ cập nhật **`Audit_Sink.health()`** (tín hiệu health quan sát được), vẫn non-blocking mặc định
+>   (fail-closed là tùy chọn triển khai). Tùy chọn **hash-chain/WORM** chống giả mạo. Xem `../design/09` §2.2/§6.2/§7.
+
 ## Mục tiêu
 
 Có `Audit_Logger.record(event)`: ghi một dòng nhật ký cho mỗi sự kiện an ninh (đăng nhập, CRUD user,

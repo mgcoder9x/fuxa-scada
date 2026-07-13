@@ -309,10 +309,10 @@ fixes the precise, testable shape and the enforcement semantics.
 ```
 Identity = {
   username:        string,
-  authenticated:   boolean,                    // from Token_Service.verify() (§02)
-  roles:           string[],                   // RBAC role ids (info.roles / token 'roles' claim)
-  groups:          number | number[] | string[], // FUXA group code(s), compat input (§5)
-  mustRotate:      boolean                      // bootstrap gate flag (REQ-17, §6)
+  authenticated:   boolean,                    // token signature valid AND unexpired (§02)
+  roles:           string[],                   // RBAC role ids — RESOLVED LIVE from the store record (NOT the token)
+  groups:          number | number[] | string[], // FUXA group code(s) — LIVE from the record; compat input only (§5)
+  mustRotate:      boolean                      // LIVE from the record's metadata (REQ-17, §6)
 }
 
 Operation = {
@@ -321,9 +321,48 @@ Operation = {
 }
 ```
 
-`Identity` is built by the middleware from `Token_Service.verify(token)`: an authenticated
-result exposes `id`→`username`, `roles`, and `groups` (§02, AC-2.3); a missing/invalid/expired
-token yields `authenticated:false` (guest — see [§8.2](#82-guest-and-unauthenticated-handling-ac-103)).
+**Identity is built from the LIVE account, not from token claims (D-015, revised 2026-07-13 — fixes
+N-011).** The token is an **identity/session reference**, not an authority snapshot. For every
+protected request the middleware performs:
+
+```
+1. verify token (§02)  → signature valid & unexpired?  no → authenticated:false (→ 401, §8.2)
+                        → yes: obtain username (id claim) and tokenVersion (§02 §3)
+2. load the LIVE record: rec = runtime.users.getUserCache(username)   // O(1) in-memory (verified)
+   rec is undefined  → account deleted / does not exist → authenticated:false (→ 401)
+   (rec.metadata.disabled === true) → account disabled → authenticated:false (→ 401)   [see scope note]
+3. tokenVersion check: if token.tokenVersion < rec.metadata.tokenVersion → token revoked → 401
+4. derive authority FROM rec (NOT the token):
+     roles      = rec.info.roles
+     groups     = rec.groups
+     mustRotate = !!rec.metadata.mustRotate
+5. authenticated:true with the above; hand to isAllowed (§4.2)
+```
+
+- **Why live, and why it is cheap (verified).** FUXA already maintains the in-memory permission
+  cache `usersMap` (`{ info, groups }` per user), updated on every write (`setUsers`), evicted on
+  delete (`removeUsers`), and pruned on role delete (`removeRoles`) — `getUserCache(username)` is an
+  O(1) map lookup (verified in `server/runtime/users/index.js`). So re-resolving roles/groups/
+  existence/`mustRotate` from the live record costs a RAM lookup, **no DB query**, and reflects the
+  current state. A user **deleted, role-removed, group-downgraded, or gated** therefore loses/loses-
+  bits-of authority on the **very next request** — the behavior §12 §2.1 already asserts, now
+  actually implemented (the N-011 contradiction is removed).
+- **The token's `roles`/`groups` claims are NO LONGER an authority source.** They MAY remain in the
+  token for FUXA-endpoint backward compatibility (§02 §3, D-007), but the module's decision ignores
+  them and reads the record. This is the single-decision-path rule (§5.2) extended to the identity's
+  own attributes.
+- **`tokenVersion` enables active revocation** of a still-signature-valid token even when the account
+  otherwise looks unchanged (force-logout, post-password-change, disable). It is stamped into the
+  token at issuance (§02 §3) and compared against the record's current `tokenVersion` (§02 owns the
+  bump points; §12 §4 bumps it on rotation).
+- A missing/invalid/expired token yields `authenticated:false` (guest — see
+  [§8.2](#82-guest-and-unauthenticated-handling-ac-103)); step 1 short-circuits before any record load.
+
+> **Scope note — `disabled` is a NEW capability.** The `metadata.disabled` check in step 2 depends
+> on an account-disable feature that does not yet exist in the requirements. The **mandatory** core
+> of D-015 is: re-resolve roles/groups/existence from the live record + `tokenVersion` revocation.
+> Account-disable is logged as a follow-up (see the D-015 entry / a future requirement) and is a
+> no-op until that field/operation exists — it does not block this fix.
 
 ### 4.2 Decision
 

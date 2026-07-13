@@ -54,3 +54,28 @@
 - [x] `14-task-17-ui-users.md` — Trang quản lý người dùng ✅
 
 > Trạng thái: **HOÀN TẤT** — đã tạo đủ toàn bộ hướng dẫn (00–14).
+
+---
+
+## ⚠️ ĐỐI CHIẾU LẠI THEO THIẾT KẾ ĐÃ SỬA (RECONCILIATION — 2026-07-13)
+
+> **Bắt buộc đọc trước khi code.** Đợt rà soát sâu 2026-07-13 đã phát hiện & sửa **11 defect thiết kế**
+> (N-010…N-019, N-021) và tinh chỉnh 3 requirement (DV-006/007/008). **Thiết kế (`../design/*` +
+> `../requirements.md`) là chuẩn tắc; guide là phi-chuẩn-tắc.** Ở đâu guide mâu thuẫn với thiết kế đã
+> sửa, **làm theo thiết kế**. Các file guide dưới đây có banner "⚠️ ĐỐI CHIẾU" ở đầu ghi rõ chỗ bị ghi đè.
+
+| Guide bị ảnh hưởng | Quyết định sửa | Tóm tắt thay đổi so với guide cũ |
+|--------------------|----------------|----------------------------------|
+| `02-task-2-luu-tru.md` | D-016, D-020 | Ghi user trong **1 transaction 1 connection** (không còn "2 connection không atomic"); `create` dùng `INSERT` (PK conflict = trùng), last-admin dùng `BEGIN IMMEDIATE` |
+| `03-task-3-password-hasher.md` | D-017 / DV-007 | Giới hạn domain ≤72 byte UTF-8; P-002 phát biểu trên domain bị chặn; test không dùng near-dup >72 byte để "ép pass" |
+| `04-task-5-token-service.md` | D-019, D-021, D-015 | Refresh **có state** (store hash-at-rest, reuse-detection RFC 9700); pin `alg` + thêm `iss/aud/sub/jti/typ/kid`; thêm `tokenVersion` để thu hồi |
+| `05-task-6-brute-force.md` | DV-008, N-019 | **Adaptive throttling** (backoff mũ, có cap) thay hard lock; store **pluggable/shared**; đồng hồ **monotonic** |
+| `06-task-7-authentication.md` | DV-006 | Unknown-user trả **401 giống hệt** bad-password (không còn 404) + dummy-hash để đồng bộ timing |
+| `07-task-8-rbac.md` | D-015 | `Identity` lấy từ **bản ghi sống** (roles/groups/tồn tại/mustRotate), **không** tin claim trong token; kiểm `tokenVersion` |
+| `08-task-9-user-crud.md` | D-017, D-020 | Validate từ chối mật khẩu >72 byte (AC-4.6) + min-length/blocklist (AC-4.7); create/last-admin atomic |
+| `09-task-11-audit.md` | D-023 | Sink audit **chuyên dụng** `fuxa-audit.log` (rotation riêng), thêm field forensic, lỗi ghi = **tín hiệu health**, tùy chọn hash-chain |
+| `10-task-12-bootstrap.md` | D-022, D-018 | Secret seed đi qua **kênh enrollment an toàn** (CLI/one-time token), **KHÔNG log ra console**; có endpoint `POST /api/account/rotate-password` |
+| `11-task-13-api.md` | D-014, D-018, D-015, N-018 | **SUPERSEDE**: bỏ mount router FUXA cho URL trùng, module là authority; thêm account router; middleware dựng identity từ bản ghi sống; **tuyệt đối không** `runtime.logger` in secret |
+
+**Trạng thái cổng:** G2 (CRITICAL) ✅, Wave B (HIGH) ✅, Wave C (MEDIUM) ✅, traceability §D ✅.
+Sau khi guide được đối chiếu xong (mục này), **G4 mở** và mới được viết code theo `../tasks.md`.

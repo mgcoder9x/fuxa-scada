@@ -62,6 +62,7 @@
     "@mapbox/node-pre-gyp": "^1.0.0",
     "@types/express": "5.0.0",
     "chai": "^5.1.2",
+    "fast-check": "^3.23.2",
     "mocha": "^10.8.2",
     "sinon": "^19.0.2",
     "typescript": "^5.6.3"

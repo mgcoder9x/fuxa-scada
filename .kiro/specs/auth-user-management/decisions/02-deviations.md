@@ -60,3 +60,40 @@
 - Rationale: Delete-path inverse of the REQ-17 bootstrap guarantee; prevents a no-admin lockout.
 - Impact / Risk: Admin-counting depends on the RBAC admin-determination predicate (owned by section 05); must reconcile FUXA group code 255/-1.
 - Verification: requirements.md AC-8.5 present; section 04 §6.5 + test item 14 + integration example; candidate P-010.
+
+---
+
+## Proposed deviations from the 2026-07-13 deep review (OPEN — need user approval before editing requirements.md)
+
+### DV-006: Change AC-1.2 — uniform 401 for unknown user (remove the username-enumeration oracle)
+- Date: 2026-07-13
+- Phase: Requirements (REQ-1)
+- Status: **Active (CONFIRMED by user 2026-07-13)** — `requirements.md`: AC-1.2 now returns the same 401 + generic body as bad-password (was 404); AC-1.3 adds the dummy-hash comparable-cost compare (timing parity); **AC-8.4** updated in lockstep (post-delete sign-in → generic 401, not 404). `design/01` synced (§2.2 outcome id, §3 sequence with dummy-hash verify, §4 mapping table, §7 uniform-failure + timing note, §8 identical-response test, §9 traceability). `design.md` Error-Handling table split into "sign-in bad credentials/unknown user → 401" vs "authenticated admin CRUD lookup unknown username → 404" (AC-7.4/AC-8.3 remain 404 — not an enumeration oracle). `design/03` timing note + `design/04` (§summary, §6.4, cross-refs, test, traceability AC-8.4) synced.
+- Links: TO-010, REQ-1 (AC-1.2, AC-1.3), REQ-8 (AC-8.4), N-011 (adjacent)
+- Context: AC-1.2 mandates **404** for an unknown username while AC-1.3 mandates **401** for a wrong password. The status/shape difference is a username-enumeration oracle (an attacker learns which usernames exist).
+- Statement (proposed): Change AC-1.2 so an unknown username returns the **same 401 + body** as a bad password (indistinguishable), with a constant-time compare against a dummy hash for unknown users to avoid a timing oracle. Post-delete sign-in (AC-8.4) would then also return 401, not 404 — AC-8.4 must be updated in lockstep.
+- Rationale: For a commercial security product, closing enumeration at the requirement level is a root fix; leaving 404/401 bakes the oracle into the contract.
+- Impact / Risk: Diverges from FUXA's current 404 behavior and changes AC-1.2/AC-8.4 wording + their tests. This is a genuine requirement change, hence a deviation needing explicit approval.
+- Verification: a test asserting identical status + body (and comparable timing) for unknown-user vs bad-password.
+
+### DV-007: Refine AC-4.5 / P-002 — bound the password domain to bcrypt's 72-byte limit (+ password policy)
+- Date: 2026-07-13
+- Phase: Requirements (REQ-4)
+- Status: **Active (user-approved 2026-07-13, option 1)** — `requirements.md` REQ-4: AC-4.5 refined to the ≤72-byte accepted domain; **AC-4.6** added (reject >72 UTF-8 bytes); **AC-4.7** added (min length default 12, NIST-63B-4 ≥15 recommended, + common-password blocklist). Design synced in `design/03` (§2.2/§7/§8.1/§9), `design.md` master-map Property 2, and `design/04` §2.3 (enforcement site).
+- Links: N-012, TO-007, D-017, REQ-4 (AC-4.5), P-002
+- Context: P-002 (from AC-4.5) is false for inputs >72 bytes due to bcrypt truncation (N-012).
+- Statement (proposed): Refine AC-4.5 so the rejection guarantee is stated over a **bounded input domain** (UTF-8 length ≤ 72 bytes, or a stricter policy max that is validated and enforced), and add acceptance criteria for a minimum password length and a common-password blocklist (NIST SP 800-63B). Add a `hashScheme` version marker to enable a future Argon2id migration without breaking verification.
+- Rationale: Makes a currently-false property true and verifiable, and raises the credential policy to a commercial baseline. Root fix, not a leaf patch.
+- Impact / Risk: Introduces an operator-visible password length cap and policy; edits REQ-4 wording + tests.
+- Verification: corrected P-002 test; policy tests for length/blocklist.
+
+### DV-008: Refine AC-15.2 — adaptive throttling instead of a hard fixed-duration lockout (OT DoS resistance)
+- Date: 2026-07-13
+- Phase: Requirements (REQ-15)
+- Status: **Active (CONFIRMED by user 2026-07-13)** — `requirements.md` REQ-15 edited: AC-15.2 now mandates **adaptive throttling** (exponential backoff with optional max interval) instead of a fixed-duration hard lockout; AC-15.4/15.5 reworded for the adaptive interval; **new AC-15.6** added (multi-instance shared-store consistency + bounded interval for targeted-DoS resistance). `design/10` updated: `BruteForceStore` pluggable seam (in-memory default / shared e.g. Redis), adaptive `baseThrottleMs`/`backoffFactor`/`maxThrottleMs` config, monotonic clock (N-019), and P-012 reference model + generator refined to the adaptive machine (now validates AC-15.1–15.6). Fail-closed threshold-zero (AC-15.3) preserved.
+- Links: N-019, REQ-15 (AC-15.2, AC-15.4, AC-15.5, AC-15.6), P-012, §10 §2.1/§2.2/§3/§5/§6/§8/§9/§10
+- Context: AC-15.2 mandates a hard lockout for a fixed duration once the threshold is reached. For an OT/SCADA operator, an attacker who knows a username can weaponize this to lock out the legitimate operator (targeted DoS); per-process state also multiplies the threshold across nodes.
+- Statement (proposed): Refine AC-15.2 toward **adaptive throttling** (increasing delay/backoff) with an optional hard cap, and make the counter state **pluggable to a shared store** so the threshold holds across instances. Keep the fail-closed threshold-zero behavior (AC-15.3).
+- Rationale: NIST SP 800-63B recommends rate-limiting/adaptive delays over hard account locks precisely to avoid attacker-induced lockout of valid users; shared state is required for correct throttling under horizontal scaling.
+- Impact / Risk: Changes AC-15.2 semantics and P-012's reference state machine; edits REQ-15 + its property/tests.
+- Verification: an updated P-012 covering adaptive delay + a multi-instance test that the effective threshold is not multiplied by node count.

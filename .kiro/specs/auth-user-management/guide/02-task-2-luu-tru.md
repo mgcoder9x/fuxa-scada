@@ -2,6 +2,16 @@
 
 > Tương ứng **Task 2** trong `../tasks.md`. Requirement: 13.1, 13.2, 13.3, 13.4, 5.4, 7.3, 8.1, 8.2, 4.2, 6.2, 9.1–9.4, 16.5.
 > Thiết kế: `../design/06-persistence-and-serialization.md` (đọc kỹ mục §5 về "bẫy băm 2 lần").
+
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ hướng dẫn cũ theo D-016 & D-020
+> Guide bản đầu mô tả ghi user bằng **2 connection** và tự nhận "không gói chung 1 transaction được"
+> (đây chính là defect **N-010**). **KHÔNG làm theo cách đó nữa.** Thiết kế đã sửa (`../design/06` §5.2–§5.4):
+> - **D-016:** adapter ghi **tất cả cột** (kể cả `password` verbatim) trong **MỘT** `BEGIN…COMMIT` trên
+>   **connection của chính adapter** (vẫn bỏ qua `setUser` để không băm 2 lần), rồi gọi `setUsers(bỏ password)`
+>   như bước làm mới cache `usersMap` **best-effort ngoài transaction**. Không bao giờ để row có password NULL/cũ.
+> - **D-020:** `create` dùng **`INSERT` thuần** (trùng username bị chặn atomic bởi khóa chính — không đọc-rồi-ghi);
+>   guard xóa admin cuối chạy trong **`BEGIN IMMEDIATE`** để 2 lệnh xóa song song không cùng qua được kiểm đếm.
+> - Task tương ứng: **2.8** (atomic write), **2.9** (atomic create + last-admin), **2.10\*** (property P-016).
 >
 > ⚠️ **Đây là task khó nhất.** Đọc chậm, làm từng bước, test từng bước. Nếu rối, dừng và nhắn tôi.
 

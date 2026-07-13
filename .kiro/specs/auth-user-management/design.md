@@ -318,6 +318,68 @@ client/src/app/
 
 ---
 
+## API Composition Root & Cutover Strategy (D-014 / D-018 — added 2026-07-13)
+
+> This section closes two verified defects: **N-014** (the module reuses FUXA's URLs but the design
+> never specified how it becomes authoritative — a "mount-after" leaves it shadowed) and **N-013**
+> (the `account.rotatePassword` gate-exception operation had no HTTP endpoint). Grounded in
+> `server/api/index.js`, `server/api/auth/index.js`, `server/api/users/index.js` (all read 2026-07-13).
+
+### Verified precedence problem
+
+`server/api/index.js` mounts, in order: `apiApp.use(authLimiter)` → `apiApp.use(limiter)` →
+`prjApi` → `usersApi` (`/api/users`, `/api/roles`) → `authApi` (`/api/signin`, `/api/refresh`,
+`/api/signout`) → … Express resolves the **first** handler that ends the response. The module
+reuses these exact URLs, so mounting the module **after** `usersApi`/`authApi` would let FUXA's
+handlers answer first and the module's RBAC/audit/`mustRotate`/brute-force would never run.
+
+### Cutover decision — SUPERSEDE at the composition root (D-014, option 1)
+
+The module is **authoritative** for the identity URLs; FUXA's overlapping routers are **not mounted**:
+
+1. In `server/api/index.js`, **stop mounting** FUXA's `usersApi` and `authApi` for the superseded
+   paths — i.e. remove (or guard behind a legacy flag) the `usersApi.init/app()` and
+   `authApi.init/app()` mounts. This is the **only** FUXA-core edit and remains within the D-003
+   "single wiring touch" boundary (composition wiring, not FUXA business logic).
+2. **Mount the module router after `apiApp.use(authLimiter)`** so `/api/signin` and
+   `/api/refresh` are still IP-rate-limited by FUXA's existing limiter (verified: `authLimiter`
+   skips all paths except those two), then after `apiApp.use(limiter)`.
+3. The module router owns: `POST /api/signin`, `POST /api/refresh`, `POST /api/signout`,
+   `GET|POST|PUT|DELETE /api/users[/:username]`, `GET|POST|PUT|DELETE /api/roles[...]`, and the new
+   rotate endpoint below. All flow through the authorization middleware (§05) + services.
+
+> **Behavioral change (intended).** `/api/users` and `/api/roles` are now governed by RBAC
+> permissions (§05), not FUXA's `haveAdminPermission(groups)` admin-group gate; `/api/signin` now
+> runs the module's `Authentication_Service` (brute-force + audit + `mustRotate`). Any FUXA code or
+> test expecting the old admin-group behavior must migrate. **Client cutover (D-011) MUST land in
+> the same change**: `AuthGuard`/interceptor point at the module's routed Login/User-Management
+> pages instead of the FUXA dialog/`app/users`.
+>
+> **Alternative on file (not chosen):** a parallel `/api/v2/identity/*` namespace with a dual-run
+> migration (TO-011 option 2) — heavier (client URL migration + dual stack); kept only as a
+> fallback if a gradual cutover is later required.
+
+### The bootstrap-gate endpoint (D-018 — closes N-013)
+
+`account.rotatePassword` (§12 §4, permission `account.rotatePassword` per §05 §2.2) is exposed as:
+
+- **`POST /api/account/rotate-password`** → `Account_Service.rotatePassword(identity, { currentPassword, newPassword })`.
+- It requires an authenticated identity and verifies the **current** secret; it is the **only**
+  operation the authorization middleware permits while `identity.mustRotate` is true (§05 §4.2
+  step 2), so a seeded/migrated admin can always reach it and nothing else until it rotates.
+- The **composition root** (`server/auth-management/index.js`) MUST instantiate `Account_Service`
+  (currently missing) and mount this route. On success it clears `mustRotate` and **bumps
+  `tokenVersion`** (D-015) so any token minted before the rotation is invalidated.
+
+### Correctness property
+
+**P-014** (owned by this composition/API layer): *for every superseded identity URL, a request is
+handled by the module (its RBAC/authentication decision is applied) and never by a residual FUXA
+handler; and a `mustRotate` identity can reach `POST /api/account/rotate-password` but no other
+protected operation.* Verified by an integration test (G3/G4).
+
+---
+
 ## Table of Contents & Requirement Traceability
 
 Each per-module section (authored in later invocations) covers the requirements and
@@ -378,10 +440,10 @@ Aligned with the existing FUXA API surface (verified in `auth/index.js` and `use
 | Success (data) | 200 | `{ status: 'success', data: {...} }` or resource JSON |
 | Success (no content) — e.g. sign-out | 204 | empty |
 | Missing required field | 400 | `{ error, message }` |
-| Bad credentials (password mismatch) | 401 | `{ status: 'error', message }` |
+| Bad credentials at sign-in — wrong password **or** unknown username (DV-006) | 401 | `{ status: 'error', error: 'invalid_credentials', message }` (identical for both, no enumeration oracle) |
 | Unauthenticated protected request | 401 | `{ error: 'unauthorized_error', message }` |
 | Authenticated but lacking permission | 403 | `{ error, message }` |
-| Unknown username (sign-in / lookups) | 404 | empty / error id |
+| Unknown username on an **authenticated admin lookup/CRUD** (user update/delete, AC-7.4/AC-8.3) | 404 | `{ error: 'user_not_found', username, message }` |
 | Rate-limited (brute force) | 429 | `{ error, message }` |
 | Service layer unavailable (fail fast, AC-16.4) | 5xx | `{ error, message }` |
 
@@ -433,9 +495,12 @@ hashes of the same `p` each verify true against `p`.
 
 ### Property 2: Password hash rejects a different plaintext
 
-*For any* two distinct plaintext passwords `A` and `B` (`A ≠ B`), `verify(B, hash(A))` is false.
+*For any* two distinct plaintext passwords `A` and `B` (`A ≠ B`) **within the enforced valid-password
+domain (UTF-8 byte length ≤ 72, AC-4.6)**, `verify(B, hash(A))` is false. (The bound is required
+because bcrypt truncates input beyond 72 bytes — D-017 / N-012; passwords exceeding 72 bytes are
+rejected at validation, not hashed.)
 
-**Validates: Requirements 4.5** — (P-002)
+**Validates: Requirements 4.5, 4.6** — (P-002)
 
 ### Property 3: User_Record write→read round-trip
 

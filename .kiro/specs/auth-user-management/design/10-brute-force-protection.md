@@ -136,20 +136,44 @@ state: Map<string, { failCount: number, lockedUntil: number | null }>
 - `lockedUntil` — epoch-ms timestamp at which the current lockout ends; `null` when not
   locked. `retryAfterMs` is derived as `max(0, lockedUntil − now)`.
 
-The map is **per-process** (in-memory), consistent with **D-002/TO-001**'s "reuse, minimal
-new surface" posture and with the fact that FUXA's own `authLimiter` also keeps its counters
-in-process (the default `express-rate-limit` `MemoryStore`). The multi-instance implication
-is called out in [§6](#6-edge-cases).
+The state is accessed through a **pluggable `BruteForceStore` seam** (**D-023 grouping / N-019**),
+not a hard-wired process map. The default implementation is the in-memory `Map` above (consistent
+with **D-002/TO-001** "reuse, minimal new surface", and with FUXA's own `authLimiter` keeping its
+counters in-process via the default `express-rate-limit` `MemoryStore`); a deployment that scales
+horizontally injects a **shared-store** implementation (e.g. Redis) behind the same seam so the
+threshold is enforced globally rather than per-node (closes **N-019**; the requirement is **AC-15.6**).
+The guard logic is identical for both implementations — only the storage backend changes:
+
+```
+interface BruteForceStore {
+  read(username: string): { failCount: number, lockedUntil: number | null, throttleLevel: number } | undefined
+  write(username: string, state): void        // atomic upsert (shared impls SHALL make read-modify-write atomic)
+  delete(username: string): void
+}
+```
+
+The multi-instance implication and the atomicity requirement for shared implementations are in
+[§6](#6-edge-cases).
 
 ### 2.2 Configuration
 
 ```
 BruteForceConfig = {
-  threshold: number          // consecutive failures that trip the lock; 0 ⇒ fail-closed (AC-15.3)
-  lockoutDurationMs: number  // how long a username stays locked once tripped (AC-15.2, AC-15.5)
-  failureWindowMs?: number   // optional: only failures within this rolling window count as "consecutive"
+  threshold: number            // consecutive failures that trip throttling; 0 ⇒ fail-closed (AC-15.3)
+  baseThrottleMs: number       // the first throttle interval once threshold is reached (AC-15.2)
+  backoffFactor: number        // multiplier applied per additional failure beyond threshold (>=1; e.g. 2 ⇒ exponential)
+  maxThrottleMs?: number       // optional hard cap on the adaptive interval (AC-15.2 "maximum interval")
+  failureWindowMs?: number     // optional: only failures within this rolling window count as "consecutive"
 }
 ```
+
+**Adaptive throttle (DV-008).** Instead of a single fixed-duration hard lockout, the interval grows
+with continued failures: at the Nth (threshold) failure the block interval is `baseThrottleMs`; each
+additional consecutive failure raises it to `baseThrottleMs * backoffFactor^(k)` (where `k` is the
+number of failures past the threshold), capped at `maxThrottleMs` when configured. `lockedUntil = now +
+currentInterval`; `throttleLevel` (`= k`) is persisted so the interval is recomputed deterministically.
+This bounds each individual block (finite, cap-limited) while still crushing sustained guessing —
+resisting attacker-induced permanent lockout of a legitimate operator (AC-15.6, NIST SP 800-63B).
 
 Defaults and rationale are in [§5](#5-configuration--defaults). `now` is supplied by an
 **injected clock** (`() => number`, defaulting to `Date.now`) so the expiry behavior
@@ -179,14 +203,18 @@ Precise semantics for each acceptance criterion:
 - **AC-15.1 — below threshold → normal.** While `failCount < threshold`,
   `checkAllowed` returns `allowed:true`; the service proceeds with the normal sign-in path.
   Each failed outcome advances `failCount` by exactly one.
-- **AC-15.2 — reaches threshold → lock for the duration, `429`.** "Reaches the threshold"
+- **AC-15.2 — reaches threshold → adaptive throttle, `429` (DV-008).** "Reaches the threshold"
   means the **Nth** consecutive failure, i.e. the `recordFailure` call **after which
-  `failCount == threshold`** (threshold `N ≥ 1`). At that instant the guard computes
-  `lockedUntil = now + lockoutDurationMs`. Every subsequent `checkAllowed(username)` with
-  `now < lockedUntil` returns `allowed:false` with `retryAfterMs = lockedUntil − now`; the
-  service short-circuits to the `rate_limited` outcome, which the API layer maps to **429**
-  per the master-map Error Handling table and [§01 §4](./01-authentication.md#4-outcome--http-response-mapping).
-  The lock is **per username** — a locked username A does not affect username B.
+  `failCount == threshold`** (threshold `N ≥ 1`). At that instant, and on each further consecutive
+  failure, the guard computes an **adaptive** interval `currentInterval = min(maxThrottleMs ?? ∞,
+  baseThrottleMs * backoffFactor^(failCount − threshold))` and sets `lockedUntil = now +
+  currentInterval` (persisting `throttleLevel = failCount − threshold`). Every subsequent
+  `checkAllowed(username)` with `now < lockedUntil` returns `allowed:false` with `retryAfterMs =
+  lockedUntil − now`; the service short-circuits to the `rate_limited` outcome, which the API layer
+  maps to **429** per the master-map Error Handling table and [§01 §4](./01-authentication.md#4-outcome--http-response-mapping).
+  The throttle is **per username** — a throttled username A does not affect username B — and each
+  individual interval is **finite** (cap-bounded when `maxThrottleMs` is set), so a party who knows a
+  username cannot lock the legitimate operator out indefinitely (AC-15.6, targeted-DoS resistance).
 - **AC-15.3 — threshold zero → always `429` (fail-closed edge).** When `threshold == 0`,
   `checkAllowed` returns `allowed:false` for **every** username on **every** call,
   irrespective of any prior failures (there is nothing to count). `retryAfterMs` in this
@@ -198,13 +226,17 @@ Precise semantics for each acceptance criterion:
   edge is defined explicitly; there is no separate decision-ledger entry — AC-15.3 in
   `requirements.md` is the source of truth.)*
 - **AC-15.4 — success resets count.** On a successful sign-in the service calls
-  `reset(username)`, setting `failCount = 0` and `lockedUntil = null`. Consequently a single
-  later failure cannot immediately re-lock a username that had accrued `N−1` failures before
-  succeeding — it again takes a full `threshold` consecutive failures to trip.
-- **AC-15.5 — lockout elapses → normal.** Once `now ≥ lockedUntil`, the next `checkAllowed`
-  treats the username as `allowed:true` again **without** any explicit `reset` call, clearing
-  `failCount`/`lockedUntil` as it admits the attempt. This is time-driven recovery via the
-  injected clock.
+  `reset(username)`, setting `failCount = 0`, `throttleLevel = 0`, and `lockedUntil = null`.
+  Consequently a single later failure cannot immediately re-throttle a username that had accrued
+  `N−1` failures before succeeding — it again takes a full `threshold` consecutive failures to trip,
+  and the adaptive backoff restarts from `baseThrottleMs`.
+- **AC-15.5 — throttle interval elapses → normal.** Once `now ≥ lockedUntil`, the next
+  `checkAllowed` treats the username as `allowed:true` again **without** any explicit `reset` call,
+  admitting the attempt. This is time-driven recovery via the injected clock. Note the adaptive
+  semantics (DV-008): a *further* failure after the interval elapses continues escalating from the
+  retained `throttleLevel` (it does not reset to `baseThrottleMs`) until a **success** resets the
+  level (AC-15.4); this keeps sustained low-and-slow guessing throttled while still admitting the
+  legitimate operator between intervals.
 
 ---
 
@@ -243,9 +275,15 @@ configure one consistent surface. Both limiters returning `429` keeps a single c
 
 | Setting | Meaning | Proposed default | Reasoning |
 |---------|---------|------------------|-----------|
-| `authLockoutThreshold` | consecutive failures that trip the lock (`threshold`) | **5** | Comfortably above legitimate mistyping (typo/caps-lock) yet low enough to blunt guessing. |
-| `authLockoutDurationMs` | how long a username stays locked (`lockoutDurationMs`) | **15 * 60 * 1000** (15 min) | Long enough to crush guess throughput; short enough that a genuine user is not locked out for a whole shift — important for an HMI/SCADA operator console. |
+| `authLockoutThreshold` | consecutive failures that trip throttling (`threshold`) | **5** | Comfortably above legitimate mistyping (typo/caps-lock) yet low enough to blunt guessing. |
+| `authLockoutBaseMs` | first adaptive throttle interval at the threshold (`baseThrottleMs`) | **30 * 1000** (30 s) | Small initial delay barely noticed by a genuine mistyping operator, yet already collapses guess throughput; grows via backoff on continued failures (DV-008). |
+| `authLockoutBackoffFactor` | multiplier per additional consecutive failure (`backoffFactor`) | **2** (exponential) | Exponential backoff quickly makes sustained guessing infeasible while each individual block stays finite (AC-15.6). |
+| `authLockoutMaxMs` | optional cap on the adaptive interval (`maxThrottleMs`) | **15 * 60 * 1000** (15 min) | Bounds the worst-case block so a known username cannot be locked out for a whole shift — important for an HMI/SCADA operator console (targeted-DoS resistance, AC-15.6). |
 | `authLockoutWindowMs` | optional rolling window for "consecutive" (`failureWindowMs`) | **5 * 60 * 1000** (5 min) | Aligns with FUXA's existing `authRateLimitWindowMs = 5*60*1000`; bounds how long stale failures linger and aids eviction ([§6](#6-edge-cases)). |
+| `authLockoutStore` | brute-force state backend (`BruteForceStore`, [§2.1](#21-state-storage)) | **in-memory** (default); **shared** (e.g. Redis) when scaled | Per-process is correct for FUXA's default single-process deployment (N-002); a shared store enforces a global threshold under horizontal scaling (N-019, AC-15.6). |
+
+*(DV-008 supersedes the earlier single `authLockoutDurationMs` fixed-duration key with the
+adaptive `authLockoutBaseMs` / `authLockoutBackoffFactor` / `authLockoutMaxMs` set.)*
 
 **Where configured.** These are read from `runtime.settings` alongside FUXA's existing
 `authRateLimitWindowMs` / `authRateLimitMax` (verified present in `server/settings.default.js`
@@ -282,26 +320,32 @@ by setting the threshold to zero.
   no in-process data race on `failCount`. Two near-simultaneous failed sign-ins for the same
   username are serialized by the loop, so the Nth failure deterministically trips the lock.
   (Cross-process races are the multi-instance note below, not an in-process concern.)
-- **Clock source for lockout.** All time comparisons use the **injected clock** (`now`),
-  defaulting to `Date.now()`. `lockedUntil` and `retryAfterMs` are computed from the same
-  clock, so a single monotonic-enough source governs both arming and expiry. Tests inject a
-  fake clock to exercise AC-15.5 deterministically ([§9](#9-testing-notes)). A backwards wall-clock
-  jump can only *lengthen* a perceived lockout (fail-safe), never shorten it below zero
-  (`retryAfterMs` is `max(0, …)`).
+- **Clock source and drift policy (N-019).** All time comparisons use the **injected clock**
+  (`now`). To make expiry robust against wall-clock/NTP adjustments, the default clock SHALL be a
+  **monotonic** source (`performance.now()`-based / `process.hrtime`), not `Date.now()`, so a
+  forward wall-clock jump cannot end a throttle interval early and a backward jump cannot lengthen
+  it unexpectedly. `lockedUntil` and `retryAfterMs` are computed from that single monotonic source;
+  `retryAfterMs` is `max(0, lockedUntil − now)`. Only the human-facing `Retry-After` header is
+  translated to wall-clock seconds for the client. Tests inject a fake clock to exercise AC-15.5
+  deterministically ([§9](#9-testing-notes)). *(Prior design used `Date.now()`, whose forward jump
+  could end a lockout early — N-019; monotonic clock closes that edge.)*
 - **Memory growth / eviction of stale entries.** Because arbitrary submitted usernames create
   entries, the map is bounded by lazy eviction: an entry is removed when a `checkAllowed`
   finds it both **not locked** (`lockedUntil` null or elapsed) **and** with `failCount == 0`
   (or with its last failure older than `failureWindowMs`). This prevents unbounded growth
   from enumeration attempts while preserving all active counters/locks. Eviction is a pure
   side effect of servicing calls (no timer thread required), matching the in-memory posture.
-- **Multi-instance / horizontal scaling (flagged).** The map is **per-process**, exactly like
-  FUXA's default `express-rate-limit` `MemoryStore`. Behind a load balancer, each instance
-  counts independently, so the effective threshold multiplies by the instance count and a
-  lock does not propagate across instances. This is acceptable for FUXA's default
-  single-process, localhost-bound deployment (**N-002**), but if the product is later scaled
-  horizontally, both this guard **and** FUXA's IP limiter need a **shared store** (e.g. Redis)
-  to enforce a global lockout. Recorded here so the Tasks phase and future scaling work
-  inherit the caveat; no shared store is introduced now (avoids new infra surface, **TO-001**).
+- **Multi-instance / horizontal scaling (resolved via the store seam — N-019, AC-15.6).** The
+  default store is **per-process** (like FUXA's default `express-rate-limit` `MemoryStore`), which is
+  correct for FUXA's default single-process, localhost-bound deployment (**N-002**). For horizontal
+  scaling the guard's `BruteForceStore` seam ([§2.1](#21-state-storage)) is injected with a
+  **shared-store** implementation (e.g. Redis) so all instances share one counter and the effective
+  threshold is **not** multiplied by the node count (**AC-15.6**). A shared implementation SHALL make
+  its read-modify-write **atomic** (e.g. a Lua script or `WATCH/MULTI`) so concurrent failures across
+  nodes do not lose increments. The guard logic is unchanged; only the backend differs. FUXA's own IP
+  limiter would need the analogous shared store for a fully global cap — flagged for the deployment/
+  ops phase, out of this module's boundary (**D-003**). No shared-store dependency is added to the
+  default build (avoids new infra surface, **TO-001**); the seam makes it opt-in.
 
 ---
 
@@ -369,17 +413,20 @@ redundant; they collapse into **one comprehensive model-based lifecycle property
 
 #### Candidate Property P-012: Lockout lifecycle matches the reference state machine
 
-*For any* threshold `N ≥ 0`, lockout duration `D > 0`, username `u`, and any finite sequence
-of interleaved attempts (each a failure or a success) with non-decreasing timestamps,
-`checkAllowed(u, now)` returns **blocked** *if and only if* the reference lockout state
-machine is in its Locked state at `now` — that is, iff either `N = 0` (fail-closed), or the
-count of consecutive failures for `u` (since the last success or the last lockout expiry, and
-within `failureWindowMs` when configured) has reached `N` and `now < lockedUntil`; and when
-blocked, `retryAfterMs` equals `max(0, lockedUntil − now)`. A success `reset` and the elapse
-of `D` are the only two transitions out of Locked, and locking `u` never changes the decision
-for any other username `u′ ≠ u`.
+*For any* threshold `N ≥ 0`, base interval `baseThrottleMs > 0`, `backoffFactor ≥ 1`, optional
+`maxThrottleMs`, username `u`, and any finite sequence of interleaved attempts (each a failure or a
+success) with non-decreasing timestamps, `checkAllowed(u, now)` returns **blocked** *if and only if*
+the reference **adaptive-throttle** state machine is in its throttled state at `now` — that is, iff
+either `N = 0` (fail-closed), or the count of consecutive failures for `u` (since the last success,
+and within `failureWindowMs` when configured) has reached `N` and `now < lockedUntil`, where
+`lockedUntil` was last set to `armAt + min(maxThrottleMs ?? ∞, baseThrottleMs · backoffFactor^(k))`
+and `k = failCount − N` is the throttle level at the arming failure; and when blocked, `retryAfterMs`
+equals `max(0, lockedUntil − now)`. A **success** `reset` (which zeroes `failCount` and the throttle
+level `k`) and the **elapse** of the current interval are the only transitions out of the throttled
+state; each individual interval is **finite** (cap-bounded when `maxThrottleMs` is set); and
+throttling `u` never changes the decision for any other username `u′ ≠ u`.
 
-**Validates: Requirements 15.1, 15.2, 15.3, 15.4, 15.5** — (candidate P-012, pending registration)
+**Validates: Requirements 15.1, 15.2, 15.3, 15.4, 15.5, 15.6** — (candidate P-012, refined by DV-008; pending registration)
 
 This single property, tested against a straightforward reference model with a controllable
 clock (a **model-based** property), covers all five acceptance criteria: below-threshold
@@ -399,10 +446,12 @@ time-based behavior is deterministic — no real timers, no `setTimeout` waits.
 ### 9.1 Property test (candidate P-012)
 
 - **One** property test implements P-012 as a **model-based** test: generate `N` (including
-  `0`), `D > 0`, an optional `failureWindowMs`, one or more usernames, and a random sequence
-  of `{ kind: 'fail' | 'success' | 'check', username, dtMs }` steps with non-decreasing time.
-  Drive both the guard and a tiny reference model; after every `check`, assert the guard's
-  `allowed`/`retryAfterMs` equals the model's.
+  `0`), `baseThrottleMs > 0`, `backoffFactor ≥ 1`, an optional `maxThrottleMs`, an optional
+  `failureWindowMs`, one or more usernames, and a random sequence of `{ kind: 'fail' | 'success' |
+  'check', username, dtMs }` steps with non-decreasing time. Drive both the guard and a tiny
+  reference model that computes the adaptive interval `min(maxThrottleMs ?? ∞, baseThrottleMs ·
+  backoffFactor^k)`; after every `check`, assert the guard's `allowed`/`retryAfterMs` equals the
+  model's, and assert every armed interval is finite and ≤ `maxThrottleMs` when set (AC-15.6).
 - **Minimum 100 iterations.**
 - Tag: `Feature: auth-user-management, Property 12: Lockout lifecycle matches the reference state machine`.
 - The generator domain **includes `threshold = 0`** so the fail-closed edge (AC-15.3) is
@@ -450,10 +499,11 @@ property covers).
 | AC-15.2 | Nth consecutive failure → lock for `D`, subsequent attempts `429` | `429` reuses the surface of FUXA's `express-rate-limit` (`server/api/index.js`); master-map Error Handling `429` row | property (P-012) + example + integration |
 | AC-15.3 | threshold `0` → every attempt for every username `429` (fail-closed) | `requirements.md` AC-15.3 (`WHERE` clause); master-map Security Posture fail-closed note | edge (in P-012 generator domain) + example |
 | AC-15.4 | success → reset consecutive-failure count to zero | `reset(username)` checkpoint on success in [§01 §3](./01-authentication.md#3-sign-in-sequence) | property (P-012) + example |
-| AC-15.5 | lockout duration elapses → process normally again | injected-clock recovery; aligns with FUXA `authRateLimitWindowMs` window convention (`server/settings.default.js`) | property (P-012) + example + integration |
+| AC-15.5 | adaptive-throttle interval elapses → process normally again | monotonic injected-clock recovery (N-019); aligns with FUXA `authRateLimitWindowMs` window convention (`server/settings.default.js`) | property (P-012) + example + integration |
+| AC-15.6 | multi-instance threshold via shared `BruteForceStore`; adaptive interval bounded (targeted-DoS resistance) | FUXA `express-rate-limit` default `MemoryStore` is per-process (`server/api/index.js`) — shared store injected behind the seam | property (P-012, cap assertion) + multi-instance integration |
 
-No orphan criteria: AC-15.1 … AC-15.5 each map to at least one test above (all five are also
-consolidated into candidate P-012). This section maps back to **REQ-15 only**, matching
+No orphan criteria: AC-15.1 … AC-15.6 each map to at least one test above (all consolidated into
+candidate P-012, with AC-15.6's cap/shared-store checks). This section maps back to **REQ-15 only**, matching
 [`../decisions/traceability.md`](../decisions/traceability.md) §A/§B (`DES-BRUTE → REQ-15`).
 
 **Traceability action required (not performed by this file):** register candidate **`P-012`**

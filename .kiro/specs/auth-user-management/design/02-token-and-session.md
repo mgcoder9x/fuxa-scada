@@ -147,7 +147,8 @@ VerifyResult =
 RefreshOutcome =
   | { kind: 'rotated',  accessToken: string, refreshToken: string, identity: Identity }  // AC-3.2
   | { kind: 'disabled' }                                    // refresh auth not enabled → 204
-  | { kind: 'rejected', reason: 'missing' | 'expired' | 'invalid' | 'wrong_type' | 'unknown_user' } // AC-3.3 → 401 + clear cookie
+  | { kind: 'rejected', reason: 'missing' | 'expired' | 'invalid' | 'wrong_type' | 'unknown_user'
+                              | 'revoked' | 'reuse_detected' } // AC-3.3 → 401 + clear cookie; 'reuse_detected'/'revoked' also revoke the family (D-019)
 ```
 
 The API layer translates `RefreshOutcome` to HTTP (see [§6.3](#63-refresh--sign-out-http-mapping)).
@@ -164,14 +165,29 @@ RBAC information REQ-2 requires.
 |-------|--------|---------|-----------|
 | `id` | `identity.username` | Subject / username (AC-2.1) | FUXA `buildAccessToken` signs `{ id: user.username, ... }` (verified) |
 | `groups` | `identity.groups` | FUXA compatibility; legacy admin check | FUXA signs `{ ..., groups: user.groups }`; `haveAdminPermission` reads `adminGroups=[-1,255]` (verified) |
-| `roles` | `identity.roles` | RBAC roles the session carries (AC-2.1) | New, per **D-007** (roles carried in token; groups retained for compat) |
+| `roles` | `identity.roles` | RBAC roles carried for compat/info only — **NOT the module's authority source** (D-015) | New, per **D-007**; re-resolved live at authz time (§05 §4.1) |
+| `tokenVersion` | `identity.tokenVersion` | **Active-revocation counter** (D-015): compared against the account's current version; a lower value ⇒ token revoked | New, per **D-015**; bumped on rotation/disable/force-logout (§12 §4 owns the rotation bump) |
 | `iat` | signer | Issued-at (auto by `jsonwebtoken`) | `jsonwebtoken` sets `iat` automatically |
 | `exp` | expiry policy ([§4](#4-expiry-policy-decision-table)) | Expiry instant; **absent only in dev-only mode** | `jwt.sign(..., { expiresIn })` sets `exp`; omitting `expiresIn` yields no `exp` |
+| `iss` | configured issuer | **Issuer** — validated on verify (D-021, RFC 8725) | new; rejects tokens minted by another issuer |
+| `aud` | configured audience | **Audience** — validated on verify (D-021) | new; rejects tokens minted for another audience |
+| `sub` | `identity.username` | Subject (RFC 7519 standard) | new; mirrors `id` for standards-compliant consumers |
+| `jti` | random per token | **Token id** — audit correlation + point revocation | new (D-021); pairs with `tokenVersion` (D-015) |
+| `typ` | `'access'` \| `'refresh'` | Explicit **token type** — validated on verify | new; hardens the access-vs-refresh distinction (§6 already checks refresh `type`) |
 
 **AC-2.1 (encodes username and roles).** `issueAccessToken` MUST populate `id` from `username`
-and `roles` from `identity.roles`. The `roles` list is the RBAC claim; FUXA's `groups` is kept
-alongside for legacy compatibility (**D-007**). Downstream, `verify` exposes both `groups` and
-`roles` so the `Authorization_Service` ([`05`](./05-rbac-authorization.md)) can reconcile them.
+and `roles` from `identity.roles`, and now also `tokenVersion`. The `roles` list is still encoded
+and `verify` still exposes it (so AC-2.1/AC-2.3 and P-007 hold), and FUXA's `groups` is kept
+alongside for legacy compatibility (**D-007**).
+
+> **Authority source (D-015, revised 2026-07-13 — fixes N-011).** The `roles` and `groups` claims
+> are **informational/compat only**; the `Authorization_Service` **does NOT trust them** for a
+> decision. Authority (roles, groups, existence, `mustRotate`) is **re-resolved from the live
+> account record on every request** via `runtime.users.getUserCache(username)` (§05 §4.1), and the
+> `tokenVersion` claim is compared against the account's current version to allow **active
+> revocation** of a still-signature-valid token. This is what makes deletion/disable/downgrade take
+> effect on the next request; encoding `roles` in the token remains only for FUXA backward-compat
+> and to satisfy the literal wording of AC-2.1/AC-2.3.
 
 **AC-2.2 (signed with the configured secret).** Signing uses the Token seam, which signs with
 `jwt-helper.secretCode` — a persistent configured secret when provided to `init(...)`, else a
@@ -183,6 +199,17 @@ holds its own secret; it delegates to the seam, so there is exactly one signing 
 > `info.roles`); the resolution of roles → permissions is **not** encoded in the token — it is
 > computed at authorization time by [`05-rbac-authorization.md`](./05-rbac-authorization.md).
 > This keeps the token small and avoids stale permission snapshots in long-lived tokens.
+
+> **JWT hardening (D-021, added 2026-07-13 — fixes N-017, RFC 8725).** (1) **Algorithm pinning:**
+> every `seam.verify(...)` MUST pass an explicit `{ algorithms: ['HS256'] }` (or the single
+> configured algorithm) so a token with a different/`none` `alg` header is rejected — closing
+> algorithm-confusion. (2) **Registered claims:** `iss`, `aud`, and `typ` are validated on verify
+> (wrong issuer/audience/type ⇒ not authenticated); `jti` gives every token a unique id for audit
+> correlation and point revocation. (3) **Key id (`kid`) header:** issued tokens carry a `kid` so
+> the signing secret can be **rotated** (verify selects the key by `kid`, allowing an old+new key
+> overlap window). These are additive to the FUXA-compat claim set (`groups` stays), so existing
+> FUXA tokens keep verifying during migration; active access-token revocation itself is the
+> `tokenVersion` mechanism (D-015).
 
 ---
 
@@ -248,11 +275,20 @@ instant. Then:
 ```
 verify(token):
   if token is null/empty                      -> { authenticated: false, reason: 'missing' }
-  decoded = seam.verifyAndDecode(token)        // FUXA jwt.verify under secretCode
-  on JsonWebTokenError (bad signature/format)  -> { authenticated: false, reason: 'bad_signature' | 'malformed' }
+  // D-021: pin algorithm + validate registered claims; select key by kid for rotation
+  decoded = seam.verify(token, { algorithms: [CONFIGURED_ALG], issuer: ISS, audience: AUD, keyByKid })
+  on JsonWebTokenError (bad signature/format/alg mismatch/iss|aud mismatch)
+                                              -> { authenticated: false, reason: 'bad_signature' | 'malformed' }
   on TokenExpiredError (exp in the past)       -> { authenticated: false, reason: 'expired' }
-  on success                                   -> { authenticated: true, claims: { id, groups, roles } }
+  if decoded.typ !== 'access'                  -> { authenticated: false, reason: 'wrong_type' }
+  on success                                   -> { authenticated: true,
+                                                     claims: { id, groups, roles, tokenVersion, jti } }
 ```
+
+> Note: the `algorithms` allow-list, `issuer`/`audience` checks, and `kid`-based key selection are
+> the D-021 hardening; a token whose `alg` header is not in the allow-list (including `none`) or
+> whose `iss`/`aud`/`typ` do not match is **not authenticated**. The exposed `tokenVersion`/`jti`
+> feed the live-authority re-resolution (D-015) and audit correlation.
 
 The resulting equivalence, which P-007 pins down:
 
@@ -280,10 +316,20 @@ The resulting equivalence, which P-007 pins down:
 
 ## 6. Refresh & Sign-Out (REQ-3)
 
-The module **reuses FUXA's existing refresh mechanism verbatim** — the `fuxa_refresh` HttpOnly
-cookie and the `/api/refresh` and `/api/signout` routes (verified in `server/api/auth/index.js`)
-— rather than inventing a new scheme (**D-002**). This section specifies the behavior behind the
-`Token_Service` interface and the API-layer mapping.
+The module **reuses FUXA's transport for refresh** — the `fuxa_refresh` HttpOnly cookie and the
+`/api/refresh` / `/api/signout` routes (verified in `server/api/auth/index.js`) — but **adds a
+server-side refresh-token store with rotation and reuse detection (D-019, revised 2026-07-13, per
+RFC 9700)**. This closes defect **N-015**: FUXA's refresh is **stateless**, so a "rotated" old
+refresh token stays valid until its 7-day expiry and can be replayed, and sign-out cannot
+invalidate a leaked token. The cookie name/path/scheme are unchanged; the statefulness lives
+entirely in a module-owned store, preserving the D-003 boundary.
+
+> **New store-layer component: `Refresh_Token_Store` (D-019).** A module-owned table (e.g.
+> `auth_refresh_tokens` in `users.fuxap.db`, written on the adapter's own transactional connection
+> per D-016 — a **new** table, not an edit to FUXA core) persisting one record per refresh token:
+> `{ jti, family_id, parent_jti, username, tokenHash, issued_at, expires_at, state: 'active' |
+> 'used' | 'revoked' }`. The token value is stored **hashed at rest** (`tokenHash`), never in
+> plaintext. This is the state that makes rotation, reuse detection, and revocation possible.
 
 ### 6.1 Refresh-token issuance on sign-in (AC-3.1)
 
@@ -295,9 +341,15 @@ When refresh-token authentication is enabled and a user authenticates successful
   (`if (enableRefreshCookieAuth) { setRefreshCookie(res, buildRefreshToken(userInfo[0])); }`,
   verified). The module preserves this gate (AC-3.1's `WHERE refresh-token authentication is
   enabled`).
-- **Token shape.** `issueRefreshToken(identity)` signs `{ id: username, type: 'refresh' }` with
-  the configured secret and the refresh TTL (`refreshTokenExpiresIn`, default `'7d'`, verified),
-  matching FUXA `buildRefreshToken`.
+- **Token shape (extended for D-019).** `issueRefreshToken(identity)` signs `{ id: username,
+  type: 'refresh', jti, family_id, tokenVersion }` with the configured secret and the refresh TTL
+  (`refreshTokenExpiresIn`, default `'7d'`, verified). It remains compatible with FUXA's
+  `buildRefreshToken` shape (adds `jti`/`family_id`/`tokenVersion`).
+- **Server-side family record (D-019).** On login, `issueRefreshToken` opens a **new token
+  family**: it generates a random `jti` and `family_id` and the `Refresh_Token_Store` persists
+  `{ jti, family_id, parent_jti: null, username, tokenHash: hash(refreshToken), issued_at,
+  expires_at, state: 'active' }`. The token is stored **hashed at rest**; the plaintext exists only
+  in the cookie sent to the client.
 - **Cookie attributes (verified `setRefreshCookie`).** `httpOnly: true`, `sameSite: 'lax'`,
   `path: '/api/refresh'`, `maxAge` derived from the refresh TTL, and
   `secure: !!runtime?.settings?.https`. The `secure` flag policy for non-localhost exposure is
@@ -305,28 +357,42 @@ When refresh-token authentication is enabled and a user authenticates successful
 
 ### 6.2 Refresh rotation (AC-3.2) and failure (AC-3.3)
 
-On `POST /api/refresh`, the flow (verified against `auth/index.js`) is:
+On `POST /api/refresh`, the stateful flow (D-019) is:
 
-1. **Short-circuit when disabled.** If `runtime.settings.secureEnabled` is off **or**
-   `enableRefreshCookieAuth` is off, FUXA responds `204` and does nothing (verified). The module
-   maps this to `RefreshOutcome.kind = 'disabled'` → `204`.
-2. **Missing cookie → reject.** If the `fuxa_refresh` cookie is absent, respond `401`
-   (`'Refresh token missing'`, verified). Per AC-3.3, the module additionally issues a
-   cookie-clear on this path (a defensive no-op when no cookie exists — see the hardening note
-   below).
-3. **Verify + type check.** `jwt.verify(refreshToken, secretCode)`; if `decoded.type !==
-   'refresh'`, clear the cookie and respond `401` (verified). Maps to `rejected/wrong_type`.
-4. **User still exists.** `getUsers({ username: decoded.id })`; if none, clear the cookie and
-   respond `401` (verified). Maps to `rejected/unknown_user`.
-5. **Rotate (AC-3.2).** Build a **new** access token and a **new** refresh token, set the new
-   refresh cookie, and return `200` with the new access token in `data.token` (verified — FUXA
-   calls `buildAccessToken`, `buildRefreshToken`, `setRefreshCookie` and returns
-   `{ status:'success', data:{ ..., token: newAccessToken } }`). Maps to
-   `RefreshOutcome.kind = 'rotated'`. **Both** tokens are replaced — a rotation, not a partial
-   refresh — satisfying AC-3.2 exactly.
-6. **Any thrown verify error → reject + clear.** FUXA's `catch` clears the cookie and responds
-   `401` (verified). Covers expired (`TokenExpiredError`) and invalid (`JsonWebTokenError`)
-   refresh tokens → `rejected/expired` | `rejected/invalid`.
+1. **Short-circuit when disabled.** `runtime.settings.secureEnabled` off **or**
+   `enableRefreshCookieAuth` off → `RefreshOutcome.kind = 'disabled'` → `204` (unchanged from FUXA).
+2. **Missing cookie → reject + clear.** Absent `fuxa_refresh` → `rejected/missing` → `401` and
+   clear the cookie (AC-3.3 hardening below).
+3. **Verify signature/expiry + type.** `seam.verify(refreshToken)`; a thrown error →
+   `rejected/expired` | `rejected/invalid`; `decoded.type !== 'refresh'` → `rejected/wrong_type`.
+   All clear the cookie.
+4. **Store lookup + REUSE DETECTION (the core of D-019 / RFC 9700).** Look `decoded.jti` up in the
+   `Refresh_Token_Store` and also confirm `hash(presentedToken)` matches the stored `tokenHash`:
+   - **not found / hash mismatch** → unknown/forged/pruned token → `rejected/invalid`; if
+     `decoded.family_id` is known, **revoke the whole family** defensively.
+   - **state = 'revoked'** → `rejected/revoked`.
+   - **state = 'used'** → **REUSE DETECTED**: an already-rotated refresh token is being replayed.
+     **Revoke the entire family** (`UPDATE auth_refresh_tokens SET state='revoked' WHERE family_id
+     = ?`), so both the attacker's and the victim's descendants die, and return
+     `rejected/reuse_detected` → `401`. This is the RFC 9700 protection FUXA's stateless scheme
+     lacked.
+   - **state = 'active'** → proceed.
+5. **Live account + version check (D-015).** `User_Store.get(decoded.id)`; missing/disabled →
+   `rejected/unknown_user` (+ revoke family). If `decoded.tokenVersion` is below the account's
+   current `tokenVersion` → `rejected/revoked` (a rotation/disable/force-logout happened).
+6. **Atomic consume-and-rotate (AC-3.2).** In **one transaction**: set the current `jti`
+   `state='used'`; mint a **new** access token and a **new** refresh token with a fresh child
+   `jti`, the **same** `family_id`, `parent_jti = old jti`, `state='active'`, `tokenHash =
+   hash(newRefresh)`; set the new refresh cookie; return `rotated` → `200 { status:'success',
+   data:{ token: newAccessToken } }`. Both tokens are replaced (AC-3.2), and the old refresh is now
+   `used`, so any later replay of it triggers step 4's reuse detection and kills the family.
+7. **Cleanup.** Expired records are pruned lazily on lookup (or periodically).
+
+> **Family revocation events (D-019).** The whole family is also revoked (all its tokens marked
+> `revoked`) on **sign-out** (AC-3.4 — so sign-out invalidates the server-side token, not merely
+> the browser cookie), on **password rotation** (§12 §4, alongside the `tokenVersion` bump), and on
+> **account disable / role-sensitive change**. This is what makes logout and compromise-response
+> actually effective — the gap N-015 identified.
 
 > **AC-3.3 clear-cookie hardening.** FUXA clears the cookie on the type-mismatch, unknown-user,
 > and thrown-error paths, but the **missing-cookie** path returns `401` *without* an explicit
@@ -348,6 +414,7 @@ diverge from it.
 | Missing refresh cookie | `rejected/missing` | **AC-3.3** | **401** `{ status:'error', message }` | **clear** (hardening) |
 | Expired refresh | `rejected/expired` | **AC-3.3** | **401** `{ status:'error', message }` | **clear** |
 | Invalid / wrong-type / unknown-user | `rejected/invalid`\|`wrong_type`\|`unknown_user` | **AC-3.3** | **401** `{ status:'error', message }` | **clear** |
+| Reuse of a rotated token / revoked token (D-019) | `rejected/reuse_detected`\|`revoked` | **AC-3.3** + RFC 9700 | **401** `{ status:'error', message }` | **clear** + **revoke whole family** (server-side) |
 | Sign-out | clear + no content | **AC-3.4** | **204** empty | **clear** `fuxa_refresh` |
 
 **AC-3.4 (sign-out).** `POST /api/signout` clears the refresh cookie (when refresh auth is
@@ -444,12 +511,20 @@ Refines the master map's **Security Posture** for the Token layer:
   (verified). Per **N-002**, any deployment that exposes these endpoints beyond `127.0.0.1` MUST
   terminate TLS and enable the `https` setting so the refresh cookie carries the `secure` flag;
   otherwise the long-lived refresh token could traverse plaintext.
-- **Rotation limits refresh-token replay.** Every successful refresh rotates *both* tokens
-  (AC-3.2), and every refresh failure clears the cookie (AC-3.3 hardening, [§6.2](#62-refresh-rotation-ac-32-and-failure-ac-33)),
-  shrinking the window in which a leaked refresh token is useful.
-- **No plaintext or secret in claims.** The `Access_Token` payload carries only `id`, `groups`,
-  `roles`, `iat`, `exp` ([§3](#3-access_token-claims-structure)) — never a password, hash, or
-  the signing secret.
+- **Stateful rotation with reuse detection (D-019, RFC 9700 — fixes N-015).** Every successful
+  refresh **atomically consumes** the presented refresh token (marks it `used`) and mints a fresh
+  one in the same family; replaying a consumed token is **detected** and **revokes the entire
+  family**, and refresh tokens are **hashed at rest**. A leaked refresh token is therefore usable
+  at most once before either the legitimate client or the attacker triggers family revocation.
+  Sign-out, password rotation, and disable also revoke the family server-side — so, unlike the
+  prior stateless design, logout and compromise-response are actually effective.
+- **Algorithm pinning + registered-claim validation (D-021, RFC 8725 — fixes N-017).** `verify`
+  passes an explicit `algorithms` allow-list (rejecting `alg: none` and algorithm-confusion),
+  validates `iss`/`aud`/`typ`, and selects the signing key by `kid` to enable secret rotation with
+  an overlap window. This is a baseline hardening the prior minimal claim set lacked.
+- **No plaintext or secret in claims.** The `Access_Token` payload carries only `id`, `sub`,
+  `groups`, `roles`, `tokenVersion`, `jti`, `iss`, `aud`, `typ`, `iat`, `exp`
+  ([§3](#3-access_token-claims-structure)) — never a password, hash, or the signing secret.
 
 ---
 
@@ -491,14 +566,27 @@ token is finite.
 
 **Validates: Requirements 2.7** — (P-008; dev-only branch AC-2.8; configured-duration sibling AC-2.6)
 
+### Property 15: Refresh-token rotation is single-use with family reuse-detection (D-019)
+
+*For any* sequence of refresh operations against the `Refresh_Token_Store`: a refresh token in
+state `active` can be consumed **exactly once** (it becomes `used` and yields a new active child in
+the same family); presenting an **already-`used`** (or `revoked`) token again is rejected **and**
+transitions **every** token in that `family_id` to `revoked`; and after a family is revoked, **no**
+token in that family is ever `active` again. Equivalently: at most one `active` token exists per
+family at any time, and a detected reuse leaves the whole family unusable.
+
+**Validates: Requirements 3.2, 3.3** — (P-015; owned by §02; RFC 9700; added 2026-07-13 per D-019/N-015)
+
 ---
 
 ## 9. Testing Notes (REQ-2 & REQ-3)
 
-**PBT applicability.** The `Token_Service` is pure input/output logic over the JWT seam, so PBT
-applies to its issuance and validation logic (P-007, P-008). The refresh/sign-out path (REQ-3)
-is HTTP status + cookie side-effect wiring with no meaningful input variation, so it uses
-example/edge/integration tests instead (per the prework classification).
+**PBT applicability.** The `Token_Service` issuance/validation is pure input/output logic over the
+JWT seam, so PBT applies (P-007, P-008). With D-019 the refresh path is now a **stateful state
+machine** (`active → used → revoked`, plus family revocation), which is itself a model-based
+property (**P-015**) testable with `fast-check` over sequences of refresh/reuse operations — the
+same style as the lockout state machine P-012. The cookie side-effects and HTTP status mapping
+remain example/edge/integration tests.
 
 **Rules for every property-based test** (from the master map's Testing Strategy):
 

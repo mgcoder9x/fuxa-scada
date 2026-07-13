@@ -87,7 +87,7 @@ testable.
 SignInOutcome =
   | { kind: 'success',        session: SignInSession }
   | { kind: 'missing_field',  error: 'missing_field',      field: 'username' | 'password' }
-  | { kind: 'unknown_user',   error: 'user_not_found' }
+  | { kind: 'unknown_user',   error: 'invalid_credentials' }   // DV-006: client-facing id + body identical to bad_password; `kind` kept only for server-side audit granularity
   | { kind: 'bad_password',   error: 'invalid_credentials' }
   | { kind: 'rate_limited',   error: 'too_many_attempts',  retryAfterMs: number }   // REQ-15 (§10)
 
@@ -159,10 +159,11 @@ sequenceDiagram
             SVC->>US: findUser(username)
             alt no matching record (AC-1.2)
                 US-->>SVC: none
+                SVC->>PH: verify(password, DUMMY_HASH)   %% DV-006: equalize timing vs the record-found path (result discarded)
                 SVC->>BF: recordFailure(username)
                 SVC->>AL: record(sign-in, username, outcome=unknown_user)
-                SVC-->>API: { kind:'unknown_user' }
-                API-->>C: 404 (no token)
+                SVC-->>API: { kind:'unknown_user', error:'invalid_credentials' }
+                API-->>C: 401 { status:'error', error:'invalid_credentials' } (no token — identical to bad_password, AC-1.2/DV-006)
             else record found
                 US-->>SVC: record { username, fullname, passwordHash, roles }
                 SVC->>PH: verify(password, passwordHash)   %% AC-1.5: never compares plaintext itself
@@ -208,7 +209,7 @@ from it.
 | Outcome (`SignInOutcome`) | AC | HTTP status | Response body | Token returned? |
 |---------------------------|----|-------------|---------------|-----------------|
 | `success` | AC-1.1 | **200** | `{ status: 'success', data: { token, username, fullname, roles } }` | **Yes** |
-| `unknown_user` | AC-1.2 | **404** | empty body (optionally `{ error: 'user_not_found' }`) | **No** |
+| `unknown_user` | AC-1.2 (DV-006) | **401** | `{ status: 'error', error: 'invalid_credentials', message }` — **byte-identical** to `bad_password` | **No** |
 | `bad_password` | AC-1.3 | **401** | `{ status: 'error', error: 'invalid_credentials', message }` | **No** |
 | `missing_field` | AC-1.4 | **400** | `{ error: 'missing_field', message }` (carries an error identifier) | **No** |
 | `rate_limited` | AC-15.2/15.3 (collaborator) | **429** | `{ error: 'too_many_attempts', message }` | **No** |
@@ -221,8 +222,13 @@ from it.
 - **401 bad password** — FUXA responds `res.status(401).json({ status:'error', message:'Invalid email/password!!!', data:null })` from the `else` branch of `bcrypt.compareSync`.
   The module preserves the `401` + `status:'error'` shape and adds the stable
   `error:'invalid_credentials'` identifier.
-- **404 unknown user** — FUXA responds `res.status(404).end()` when
-  `findOne` yields no record (the outer `else`). The module preserves `404` **with no token**.
+- **Unknown user (DV-006 — diverges from FUXA on purpose).** FUXA responds `res.status(404).end()`
+  when `findOne` yields no record (the outer `else`, verified). The module **intentionally departs**
+  from this: an unknown username returns the **same `401 { status:'error', error:'invalid_credentials' }`**
+  as a bad password, with **no token**, plus a dummy-hash `verify` to equalize timing — so neither the
+  status/body nor the response latency reveals whether the username exists (removes the
+  username-enumeration oracle). This is the approved requirement change AC-1.2 (DV-006), also applied
+  to post-delete sign-in (AC-8.4).
 - **400 missing field** — FUXA reaches `400` only via its `.catch(...)`
   (`{ error: err.code || 'unexpected_error', message }`). The module instead validates field
   presence *up front* at the API layer and returns `400 { error:'missing_field', ... }`
@@ -308,10 +314,14 @@ API fails fast when the service is unavailable (AC-16.4, [§7](#7-error-handling
   comparing (verified). The module mirrors this: if the located record has no usable
   `passwordHash`, the outcome is `bad_password` (**401**, no token) and the attempt is counted
   as a failure — a record cannot authenticate without a hash.
-- **Uniform failure responses (no user enumeration aid beyond status).** Bodies for `401`/`404`
-  avoid echoing the submitted username or any detail about *why* beyond the stable error id, to
-  avoid leaking account existence in the body. (The status-code distinction between 404 and 401
-  is mandated by AC-1.2/AC-1.3 and is retained as specified.)
+- **Uniform failure responses (enumeration oracle removed — DV-006).** Unknown-user and
+  bad-password now return an **identical** `401 { status:'error', error:'invalid_credentials' }`
+  body (no echo of the submitted username, no reason beyond the stable generic id). To also close
+  the *timing* side-channel, the unknown-user path performs a comparable-cost `Password_Hasher.verify`
+  against a fixed **dummy hash** (result discarded) so the response latency does not distinguish
+  "no such user" from "wrong password". Consequently a client cannot tell whether an account exists
+  from either the status/body or the timing. (Server-side audit still records the finer
+  `unknown_user` vs `bad_password` outcome — that granularity never reaches the client.)
 - **Runtime not ready.** FUXA’s auth app returns `404` when `!runtime.project` (verified
   middleware). The module’s router applies the same fail-fast guard and, more generally, if the
   **service layer is unavailable**, the API returns an immediate error rather than hanging
@@ -354,11 +364,14 @@ the brute-force guard replaced by test doubles so the decision logic is isolated
    `signIn` yields `{ kind:'success' }` and the API returns **200** with
    `data = { token, username, fullname, roles }`; `roles` equals the record’s roles; `token` is
    the value returned by the (faked) `Token_Service`.
-2. **AC-1.2 — unknown user.** Given `User_Store.findUser` returns none, the API returns **404**
-   and the body contains **no token**; the brute-force guard’s `recordFailure` was called.
+2. **AC-1.2 — unknown user (DV-006).** Given `User_Store.findUser` returns none, the API returns
+   **401** with `error:'invalid_credentials'` and **no token** — a response **byte-identical** to the
+   bad-password case (item 3); assert the unknown-user path still invokes `Password_Hasher.verify`
+   (against the dummy hash) so timing matches, and the brute-force guard’s `recordFailure` was called.
 3. **AC-1.3 — bad password.** Given a located record but `Password_Hasher.verify` returns
    `false`, the API returns **401** with `error:'invalid_credentials'` and **no token**;
-   `recordFailure` was called.
+   `recordFailure` was called. **Enumeration-safety assertion:** capture the full response for an
+   unknown username and for a wrong password and assert they are **identical** (status + body).
 4. **AC-1.4 — missing field.** For a body missing `username`, and again for one missing
    `password`, the API returns **400** with `error:'missing_field'`; `User_Store.findUser` and
    the brute-force guard are **never** called (validated before delegation).
@@ -378,7 +391,7 @@ End-to-end through the real router against the FUXA store adapter and real
 - A seeded user with a known password signs in and receives a **200** with a token that
   `Token_Service.verify` accepts (ties into P-007, owned by section 02).
 - A wrong password for that same user returns **401** with no token.
-- An unknown username returns **404** with no token.
+- An unknown username returns the **same 401** (identical status + body) with no token (DV-006).
 
 These integration cases verify the **wiring** (API → service → store/hasher/token); they are
 intentionally few, because the exhaustive input coverage lives in the property tests owned by
@@ -391,7 +404,7 @@ sections 02 and 03.
 | AC | Behavior | Verified FUXA anchor | Test type |
 |----|----------|----------------------|-----------|
 | AC-1.1 | success → 200 with token, username, fullname, roles | `buildAccessToken`, `res.json({status:'success', data})` in `auth/index.js` | example + integration |
-| AC-1.2 | unknown username → 404, no token | `res.status(404).end()` in `auth/index.js` | example + integration |
+| AC-1.2 (DV-006) | unknown username → **401 identical to bad-password** (status+body+timing), no token | departs from FUXA `res.status(404).end()` — unified to remove enumeration oracle | example (identical-response assertion) + integration |
 | AC-1.3 | password mismatch → 401, no token | `401 { status:'error' }` after `bcrypt.compareSync` in `auth/index.js` | example + integration |
 | AC-1.4 | missing field → 400 + error id | `400 { error, message }` (`.catch`) in `auth/index.js`; hardened to up-front check | example |
 | AC-1.5 | delegate compare to `Password_Hasher`, no plaintext compare | relocates inline `bcrypt.compareSync` behind the Hash seam | example (delegation) + P-001/P-002 in §03 |

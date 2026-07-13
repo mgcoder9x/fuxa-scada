@@ -1,588 +1,154 @@
-"Generate Task List" là một nút bấm (link) trong giao diện Kiro. Bấm vào nó sẽ yêu cầu tôi làm bước tiếp theo của quy trình: chuyển thiết kế thành một danh sách công việc (task) cụ thể để triển khai code.
-
-"Generate" nghĩa là gì
-Generate = tạo/sinh ra. "Generate Task List" = "tạo danh sách công việc".
-Cho tới giờ ta mới có yêu cầu (requirements) và thiết kế (design) — tức là mô tả phải làm gì và làm thế nào, chưa có dòng code nào.
-Danh sách task là bước biến thiết kế đó thành các bước code có thứ tự, ví dụ: "Task 1: tạo Password_Hasher + viết test P-001/P-002", "Task 2: tạo Token_Service...", v.v. Mỗi task gắn với yêu cầu và property để code xong là kiểm chứng được ngay.
-Bấm hay không?
-Bạn có 2 cách làm cùng một việc, kết quả như nhau:
-
-Bấm vào link "Generate Task List" trong giao diện, hoặc
-Nhắn cho tôi "tạo task list đi" — tôi sẽ tự chạy.
-Không bắt buộc phải bấm link; bảo tôi bằng lời cũng được.
-
-Tôi khuyên gì
-Trước khi tạo task, tôi nghĩ nên chốt nhanh vài điểm còn treo (đã nêu ở phần "hoãn sang Task") để danh sách task chính xác ngay từ đầu, tránh phải sửa lại:
-
-Di trú admin '123456' khi nâng cấp — có ép đổi mật khẩu không?
-Xác nhận 3 property candidate (P-010/P-011/P-012) có đưa vào test không.
-Cấm admin tự xóa chính mình không?
-Nhưng đây không bắt buộc — nếu bạn muốn đi nhanh, tôi có thể tạo task list luôn và để các điểm treo đó thành task "cần quyết định" trong danh sách.
-
-Bạn chọn hướng nào?
-
-Bạn muốn làm gì tiếp theo?
-
-Chốt 3 điểm treo trước, rồi tạo task list
-
-Thinking completed
-+
-Rõ. Tôi nêu từng điểm kèm khuyến nghị và lý do chính xác để bạn chốt:
-
-1. Di trú admin '123456' khi nâng cấp — có ép đổi mật khẩu không?
-Khuyến nghị: CÓ ép đổi. Lý do: nếu một install FUXA cũ (đang có admin '123456') nâng cấp lên module này mà không ép đổi, thì đúng những hệ dễ bị tấn công nhất lại vẫn giữ nguyên lỗ hổng — phá vỡ toàn bộ mục tiêu của Requirement 17. Cái giá phải trả: khi nâng cấp, admin cũ buộc phải đặt mật khẩu mới một lần (phiền nhẹ, nhưng đáng). Với sản phẩm thương mại, an toàn ưu tiên hơn.
-
-2. Xác nhận 3 property candidate (P-010/P-011/P-012)?
-Khuyến ngh: CÓ, đưa cả 3 vào test. Lý do: cả ba đều là bất biến giá trị cao và test bằng fast-check rất rẻ:
-
-P-010 — hệ luôn còn ≥1 admin (chống khóa cứng). Sở hữu chung §04+§12.
-P-011 — xóa vai trò thì cắt sạch tham chiếu ở mọi user (không để "quyền ma"). Sở hữu §05.
-P-012 — vòng đời khóa brute-force đúng như máy trạng thái. Sở hữu §10.
-3. Cấm admin tự xóa chính mình (khi không phải admin cuối)?
-Khuyến nghị: KHÔNG thêm luật này. Lý do: luật chống-xóa-admin-cuối (AC-8.5) đã bảo vệ điều quan trọng nhất — hệ không bao giờ hết admin. Nếu một admin tự xóa mình trong khi còn admin khác, hệ vẫn ổn và khôi phục được (admin khác tạo lại). Thêm luật cấm tự xóa là "cho chắc" nhưng không cần cho an toàn, và làm tăng độ phức tạp không cần thiết. Nếu sau này bạn muốn, thêm rất dễ.
-
-Bạn chốt 3 điểm treo thế nào?
-
-Đồng ý cả 3 khuyến nghị
-
-Thinking completed
-+
-Đã chốt cả 3. Cập nhật sổ quyết định và truy vết, rồi tạo task list.
-
-Accepted edits to
-
-traceability.md
-
-
-Accepted edits to
-
-01-ai-decisions.md
-
-
-Thinking completed
-+
-Sổ và truy vết đã cập nhật (P-010/011/012 chuyển sang CONFIRMED, ghi D-013). Giờ tạo danh sách task triển khai từ thiết kế.
-
-Error(s) while reading file(s)
-
-tasks.md
-Read file(s)
-
-01-authentication.md
-
-02-token-and-session.md
-
-03-password-security.md
-
-04-user-management.md
-
-05-rbac-authorization.md
-
-06-persistence-and-serialization.md
-
-07-ui-login-page.md
-
-08-ui-user-management-page.md
-
-09-audit-logging.md
-
-10-brute-force-protection.md
-
-11-data-models.md
-
-12-admin-bootstrap.md
-Accepted creation of
-
-tasks.md
-
-
-Checked diagnostics
-
-tasks.md
-Accepted edits to
-
-tasks.md
-
-
-Checked diagnostics
-
-tasks.md
-Thinking completed
-+
-Danh sách task đã được tạo. Kiểm tra định dạng và xem qua.
-
-Checked diagnostics
-
-tasks.md
-Read file(s)
-
-tasks.md
-Thinking completed
-+
-Toàn bộ spec đã hoàn chỉnh: yêu cầu → thiết kế (13 tài liệu) → sổ chống-drift → danh sách task. Tasks.md sạch định dạng.
-
-Danh sách task — tổng quan
-18 nhóm task (gồm 4 checkpoint), sắp từ dưới lên để không có code mồ côi:
-
-Khung module + mô hình dữ liệu + interface
-Serialization + Store adapter (giải bẫy băm 2 lần)
-Password_Hasher
-Token_Service
-Brute-force guard
-Authentication_Service
-Role_Service + Authorization_Service
-User_Service (kèm chống xóa admin cuối)
-Audit_Logger + nối điểm phát sự kiện
-Admin bootstrap + đổi mật khẩu + di trú ép đổi '123456'
-API routers + middleware + 1 dòng mount vào FUXA 15–17. Client + UI Login + UI User Management (SUPERSEDE)
-Điểm mạnh về kiểm chứng: cả 12 property (P-001…P-012) đều có task test fast-check riêng (≥100 vòng, gắn đúng REQ/AC). Các task test đánh dấu * (tùy chọn nếu muốn MVP nhanh, nhưng bạn thiên về kiểm chứng nên tôi khuyên giữ). Có sẵn đồ thị phụ thuộc (11 wave) để biết task nào làm song song được.
-
-FUXA lõi chỉ bị chạm qua 3 adapter + 1 dòng mount — đúng ranh giới D-003.
-
-Còn 1 việc bạn từng dặn: thư mục guide/
-Bạn muốn một thư mục hướng dẫn để bạn tự làm, cực chi tiết, từng bước nhỏ nhất, bằng tiếng Việt. Giờ đã có task list nên hướng dẫn sẽ bám đúng từng task thật. Tôi có thể tạo nó bây giờ.
-
-Bạn muốn đi hướng nào?
-
-Bạn muốn làm gì tiếp theo?
-
-Tạo thư mục hướng dẫn (guide/) trước
-
-Thinking completed
-+
-Được. Tôi tạo thư mục guide/ bằng tiếng Việt, hướng dẫn từng bước nhỏ bám đúng task list, để bạn tự code. Tôi làm theo nhịp: dựng khung + trang "bắt đầu ở đây" + hướng dẫn chi tiết Task 1 trước, rồi tiếp từng task sau (giữ chất lượng cao, không dồn ẩu).
-
-Bắt đầu bằng trang mục lục.
-
-Accepted creation of
-
-README.md
-
-
-Thinking completed
-+
-Accepted creation of
-
-00-chuan-bi.md
-
-
-Thinking completed
-+
-Giờ hướng dẫn chi tiết Task 1 — Khung module + mô hình dữ liệu + interface.
-
-Accepted creation of
-
-01-task-1-khung-module.md
-
-
-Thinking completed
-+
-Đã tạo phần đầu của thư mục hướng dẫn:
-
-README.md
- — mục lục + cách dùng + nguyên tắc vàng chống drift.
-00-chuan-bi.md
- — cài đặt (Node, fast-check), cấu trúc thư mục, cách chạy test, quy ước viết property test và service. Đọc trang này trước.
-01-task-1-khung-module.md
- — hướng dẫn Task 1 cực chi tiết: 8 bước, mỗi bước có code mẫu đầy đủ (models, interfaces, composition root), test bất biến, và lệnh kiểm chứng cụ thể kèm kết quả mong đợi.
-Cách hướng dẫn được viết: mỗi task một file, cấu trúc giống nhau (Mục tiêu → Phụ thuộc → File sẽ tạo → Các bước có code → Cách kiểm chứng → Đối chiếu REQ/property). Bạn làm theo là ra sản phẩm chạy được và test xanh.
-
-Tôi sẽ tạo tiếp các file hướng dẫn còn lại theo nhịp từng-cái-một (giống lúc làm thiết kế) để giữ độ chi tiết cao. Nhưng trước khi tôi viết tiếp, gợi ý: bạn thử làm Task 1 theo 01-task-1-khung-module.md xem hướng dẫn đã đủ rõ và vừa "tầm" bạn chưa — nếu chỗ nào khó hiểu, tôi chỉnh độ chi tiết cho các file sau cho khớp.
-
-Bạn muốn tôi làm gì tiếp?
-
-Bạn muốn tôi làm gì tiếp theo với thư mục hướng dẫn?
-
-Viết tiếp hướng dẫn Task 2
-
-Thinking completed
-+
-Task 2 (Store adapter) là mục kỹ thuật nhất — cần code chính xác cách nối vào FUXA. Tôi đọc lại mã nguồn thật của FUXA để hướng dẫn không bịa.
-
-Read file(s)
-
-usrstorage.js
-Thinking completed
-+
-Read file(s)
-
-index.js
-Thinking completed
-+
-Đã đọc mã nguồn thật của FUXA (usrstorage.js và 
-index.js
-). Điểm mấu chốt tôi xác nhận để hướng dẫn chính xác: runtime.users.setUsers băm lại mật khẩu truyền vào, và không expose truy cập SQL trực tiếp — nên adapter phải mở kết nối sqlite riêng chỉ để ghi cột password nguyên văn. Giờ viết guide Task 2.
-
-Accepted creation of
-
-02-task-2-luu-tru.md
-
-
-Thinking completed
-+
-Guide Task 2 (khó nhất) đã xong với code đầy đủ và chính xác theo mã nguồn FUXA thật. Cập nhật mục lục.
-
-Accepted edits to
-
-README.md
-
-
-Guide Task 2 hoàn tất — phần khó nhất, với code adapter đầy đủ và chính xác theo mã nguồn FUXA thật:
-
-serialization.js (chịu lỗi) + property test P-005.
-FuxaUserStoreAdapter — xử lý bẫy băm 2 lần đúng cách (ghi cột không-bí-mật qua setUsers để giữ cache, ghi password nguyên văn qua kết nối sqlite riêng), tách/ghép info ↔ {roles, metadata}, đọc chịu lỗi.
-FuxaRoleStoreAdapter — vá luôn lỗ hổng getRoles không try/catch của FUXA.
-Property test P-003, P-004 (chạy trên sqlite tạm) + test hồi quy chứng minh không băm 2 lần và giữ mật khẩu khi bỏ trống.
-Tôi nêu rõ một điểm trung thực trong guide: hai bước ghi dùng 2 kết nối sqlite nên không gói chung 1 transaction tuyệt đối — rủi ro hiếm, tự lành, đã ghi chú.
-
-Mục lục đã tick xong 00, 01, 02. Còn 12 file guide (Task 3 → 17).
-
-Bạn muốn tôi làm gì tiếp theo?
-
-Viết tiếp hướng dẫn Task 3
-
-Thinking completed
-+
-Viết tiếp guide Task 3 — Password_Hasher (đơn giản hơn Task 2).
-
-Accepted creation of
-
-03-task-3-password-hasher.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 3 (Password_Hasher) hoàn tất: adapter bọc bcrypt (file duy nhất import bcryptjs), service tiêm phụ thuộc (không import bcrypt), property test P-001/P-002 (cost 4 cho nhanh) + test biên (verify phòng thủ, hash rỗng, tương thích hash cost-10 của FUXA).
-
-Tiến độ guide: 4/15 file xong (00, 01, 02, 03). Còn lại: Token, Brute-force, Authentication, RBAC, User CRUD, Audit, Bootstrap, API, Client, UI Login, UI Users.
-
-Tiếp theo?
-
-Viết tiếp guide Task 5 (Token_Service)
-
-Elapsed time: 23m 2s
-
-
-Checkpoint
-Restore
-cực sâu để tiếp tục chính xác nhất
-
-Kiro
-Thinking completed
-+
-Để hướng dẫn Token_Service chính xác tuyệt đối, tôi đọc trực tiếp mã JWT thật của FUXA trước.
-
-Read file(s)
-
-jwt-helper.js
-
-index.js
-Thinking completed
-+
-Đã đọc jwt-helper.js và 
-index.js
- thật. Điểm mấu chốt: FUXA ký {id, groups} bằng secretCode của nó; module cần thêm claim roles (D-007) và tự kiểm soát hạn token (bảng chính sách 1 giờ mặc định), nên adapter dùng jsonwebtoken trực tiếp nhưng lấy đúng secretCode của FUXA để token tương thích. Giờ viết guide Task 5.
-
-Accepted creation of
-
-04-task-5-token-service.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 5 (Token_Service) hoàn tất với code chính xác (lấy đúng secret của FUXA, bảng chính sách hạn, P-007/P-008 test có kiểm soát thời gian). Tiến độ 5/15.
-
-Viết tiếp Task 6 — Brute-Force guard (logic thuần, tôi có đủ thông tin từ §10, không cần đọc thêm file).
-
-Accepted creation of
-
-05-task-6-brute-force.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 6 (Brute-force) hoàn tất: guard logic thuần với đồng hồ tiêm vào, P-012 mô hình hóa + 5 test biên phủ đủ AC-15.1…15.5. Tiến độ 6/15.
-
-Viết tiếp Task 7 — Authentication_Service (ráp các mảnh: store + hasher + token + brute-force + audit).
-
-Accepted creation of
-
-06-task-7-authentication.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 7 (Authentication) hoàn tất: signIn trả tập đóng outcome đúng thứ tự, chỉ so mật khẩu qua hasher (AC-1.5), chống injection (D-006), 7 test đơn vị. Tiến độ 7/15.
-
-Viết tiếp Task 8 — RBAC (Role_Service + Authorization_Service; sở hữu P-006, P-011; định nghĩa "ai là admin").
-
-Accepted creation of
-
-07-task-8-rbac.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 8 (RBAC) hoàn tất: Role_Service, Authorization_Service (thứ tự quyết định + fail-closed), isAdministrator dùng chung, P-006 + P-011. Tiến độ 8/15.
-
-Viết tiếp Task 9 — User CRUD (tạo/sửa/xóa, kèm chống xóa admin cuối dùng isAdministrator).
-
-Accepted creation of
-
-08-task-9-user-crud.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 9 (User CRUD) hoàn tất: tách tạo/sửa, UserView không hash, chống xóa admin cuối, 8 test. Tiến độ 9/15.
-
-Viết tiếp Task 11 — Audit Logging. Đọc logger thật của FUXA trước cho chính xác.
-
-Read file(s)
-
-logger.js
-Thinking completed
-+
-Đã đọc logger.js. Sink audit sẽ gọi logger.info(line, true) (true = không in console). Viết guide Task 11.
-
-Accepted creation of
-
-09-task-11-audit.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 11 (Audit) hoàn tất: record không ném, dòng AUDIT +JSON, không lộ bí mật, 5 test. Tiến độ 10/15.
-
-Viết tiếp Task 12 — Admin Bootstrap (gieo admin + đổi mật khẩu + di trú; diệt lỗ hổng '123456'; P-009, P-010).
-
-Accepted creation of
-
-10-task-12-bootstrap.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 12 (Bootstrap) hoàn tất: gieo admin mật khẩu ngẫu nhiên + cổng mustRotate, đổi mật khẩu, di trú ép đổi '123456', P-009/P-010. Tiến độ 11/15.
-
-Task 13 cần biết chỗ FUXA gắn router. Tôi tìm điểm mount thật.
-
-Searched workspace
-Finding how FUXA mounts its API sub-apps/routers in server/api/index.js to give an accurate one-line mount instruction for the module router.
-Locate where auth routes are wired in the server to identify the mount point for the new module router.
-Thinking completed
-+
-Searched workspace
-Finding where the auth API is initialized/mounted to locate the module mount point.
-Locating references to the auth API app across the server to find the mount site.
-Thinking completed
-+
-Searched workspace
-Finding the express app.use mount lines in the main api index to show where to add the module router.
-Thinking completed
-+
-Searched workspace
-server api index
-Command
-c:\Users\toann\Desktop\WORK_PRO\FUXA
-
-Select-String -Path "server\api\index.js" -Pattern "\.use\(","auth","express" -SimpleMatch | Select-Object -First 25 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
-6: var express = require('express');
-9: const authJwt = require('./jwt-helper');
-10: const rateLimit = require("express-rate-limit");
-13: var authApi = require('./auth');
-41: apiApp = express();
-51: authJwt.init(runtime.settings.secureEnabled, runtime.settings.secretCode, ru
-ntime.settings.tokenExpiresIn);                                                 52: const authMiddleware = verifyApiOrToken(runtime);
-54: const authLimiter = rateLimit({
-55: windowMs: runtime.settings.authRateLimitWindowMs || 5 * 60 * 1000,
-56: max: runtime.settings.authRateLimitMax || 100,
-67: apiApp.use(authLimiter);
-70: prjApi.init(runtime, authMiddleware, verifyGroups);
-72: usersApi.init(runtime, authMiddleware, verifyGroups);
-74: alarmsApi.init(runtime, authMiddleware, verifyGroups);
-76: authApi.init(runtime, authJwt.secretCode, authJwt.tokenExpiresIn, runtime.se
-ttings.enableRefreshCookieAuth, runtime.settings.refreshTokenExpiresIn);        77: apiApp.use(authApi.app());
-78: pluginsApi.init(runtime, authMiddleware, verifyGroups);
-80: diagnoseApi.init(runtime, authMiddleware, verifyGroups);
-82: daqApi.init(runtime, authMiddleware, verifyGroups);
-84: schedulerApi.init(runtime, authMiddleware, verifyGroups);
-86: scriptsApi.init(runtime, authMiddleware, verifyGroups);
-88: resourcesApi.init(runtime, authMiddleware, verifyGroups);
-90: commandApi.init(runtime, authMiddleware, verifyGroups);
-92: reportsApi.init(runtime, authMiddleware, verifyGroups);
-94: apiKeysApi.init(runtime, authMiddleware, verifyGroups);
-Thinking completed
-+
-Tìm được điểm mount: trong 
-index.js
-, mẫu là xxxApi.init(...) rồi apiApp.use(xxxApi.app()) (dòng ~77 cho auth). Giờ viết guide Task 13.
-
-Accepted creation of
-
-11-task-13-api.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 13 (API + mount) hoàn tất: middleware, 3 router, composition root, và đúng 1 dòng mount vào 
-index.js
-. Toàn bộ phía server (Task 1–13) đã có hướng dẫn đầy đủ. Tiến độ 12/15.
-
-Còn lại là phía client (Angular): Task 15 (HTTP client), 16 (UI Login), 17 (UI Users). Viết tiếp Task 15.
-
-Accepted creation of
-
-12-task-15-client.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 15 (client HTTP) hoàn tất. Tiến độ 13/15. Viết tiếp Task 16 — UI Login.
-
-Accepted creation of
-
-13-task-16-ui-login.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Guide Task 16 (UI Login) hoàn tất. Tiến độ 14/15. Viết file cuối — Task 17: UI User Management.
-
-Accepted creation of
-
-14-task-17-ui-users.md
-
-
-Accepted edits to
-
-README.md
-
-
-Thinking completed
-+
-Toàn bộ thư mục hướng dẫn đã hoàn tất. Kiểm tra lần cuối các file.
-
-Searched workspace
-Confirming all guide files were created in the guide folder.
-Hoàn tất toàn bộ. Đây là tổng kết cuối cùng.
-
-Thư mục hướng dẫn guide/ — ĐẦY ĐỦ (16 file)
-README.md — mục lục + cách dùng + nguyên tắc chống drift.
-00-chuan-bi.md — cài đặt, cấu trúc, cách chạy test, quy ước.
-14 file hướng dẫn task (01→14), mỗi file: mục tiêu → phụ thuộc → file sẽ tạo → các bước có code đầy đủ → cách kiểm chứng (lệnh + kết quả mong đợi) → đối chiếu REQ/property.
-Toàn bộ code trong guide được viết dựa trên mã nguồn FUXA thật mà tôi đã đọc trực tiếp (usrstorage.js, 
-index.js
-, jwt-helper.js, 
-index.js
-, logger.js, 
-index.js
-) — không bịa. Cả 12 property (P-001…P-012) đều có bài test fast-check cụ thể trong guide.
-
-Bức tranh toàn cảnh spec auth-user-management
-Bạn giờ có một bộ hồ sơ hoàn chỉnh, nhất quán:
-
-Thành phần	Nội dung
-requirements.md	17 yêu cầu (EARS, đo được)
-design.md + design/01–12	Kiến trúc tổng + 12 mục chi tiết, kiểm chứng theo mã FUXA
-decisions/	Sổ chống-drift: 13 quyết định AI, 5 deviation, 6 trade-off, 9 note + ma trận truy vết REQ⇄thiết kế⇄property
-tasks.md	18 nhóm task, sắp theo phụ thuộc, gắn REQ/AC/property
-guide/	Hướng dẫn tiếng Việt tự triển khai, từng bước nhỏ
-Bạn nên làm gì bây giờ
-Mở 
-00-chuan-bi.md
-, làm theo (cài fast-check, kiểm môi trường).
-Làm lần lượt guide/01…14, mỗi task chạy test ngay — xanh mới đi tiếp.
-Khi bí bất kỳ đâu, guide đã chỉ file thiết kế tương ứng để tra sâu.
-Bất cứ lúc nào bạn code một task mà test đỏ hoặc muốn tôi làm giúp một task cụ thể, cứ nói (ví dụ "làm Task 1 cho tôi" hoặc "Task 2 test đỏ ở chỗ X") — tôi sẽ vào code trực tiếp. Chúc bạn triển khai thuận lợi.
-
-Checkpoint
-Restore
-Nói lại bạn đã làm gì? 
-
-Kiro
-Thinking completed
-+
-Tóm tắt toàn bộ những gì tôi đã làm trong phiên này, theo thứ tự thời gian:
-
-1. Tư vấn cập nhật FUXA
-Bạn hỏi cách cập nhật FUXA sau này. Tôi kiểm tra và xác định: thư mục là bản ZIP (không phải git), FUXA v1.3.4. Tôi tư vấn 3 cách (Git / Docker / ZIP thủ công) và phân biệt rõ: dữ liệu dự án an toàn khi cập nhật, còn code tự sửa thì cần Git để giữ.
-
-2. Dọn Docker
-Bạn báo cài Docker Desktop làm hết dung lượng. Tôi kiểm tra: Docker cài dở rồi tự rollback (chỉ còn ~19 MB rác), thủ phạm chiếm chỗ thật là WSL Ubuntu 14.88 GB (của bạn, không phải Docker). Tôi gỡ sạch mọi dấu vết Docker, giữ nguyên Ubuntu.
-
-3. Chạy FUXA bằng Node.js
-Bạn chọn chạy trực tiếp (không Docker). Tôi cài dependencies cho server, phát hiện client đã build sẵn, và khởi động FUXA thành công ở http://localhost:1881.
-
-4. Tạo spec đầy đủ cho module "Xác thực & Quản lý người dùng (RBAC)"
-Đây là phần lớn nhất. Bạn muốn làm bài bản, chống drift, chất lượng thương mại. Tôi đã tạo trong .kiro/specs/auth-user-management/:
-
-requirements.md — 17 yêu cầu (EARS, đo được).
-design.md + design/01–12 — kiến trúc tổng + 12 mục thiết kế chi tiết, tất cả kiểm chứng bằng đọc mã nguồn FUXA thật (không bịa).
-decisions/ — sổ chống-drift bạn yêu cầu (4 loại: quyết định AI / chỗ đổi so với yêu cầu / trade-off / điều cần biết) + ma trận truy vết REQ⇄thiết kế⇄property.
-tasks.md — 18 nhóm task sắp theo phụ thuộc, gắn REQ/AC/property.
-guide/ — 16 file hướng dẫn tiếng Việt để bạn tự triển khai từng bước nhỏ, kèm code đầy đủ và lệnh kiểm chứng.
-Những phát hiện bảo mật đáng chú ý (trong lúc thiết kế)
-FUXA đẩy nguyên req.body vào truy vấn → nguy cơ query-injection (đã thiết kế vá).
-FUXA gieo admin mặc định '123456' không bắt đổi → thiết kế diệt tận gốc (mật khẩu ngẫu nhiên + bắt đổi + di trú).
-FUXA getRoles không try/catch → 1 role hỏng làm sập cả danh sách (đã vá).
-"Bẫy băm 2 lần" khi ghi mật khẩu (đã giải bằng ghi cột password nguyên văn).
-Trạng thái hiện tại
-Spec + hướng dẫn đã hoàn chỉnh. Chưa viết code triển khai thật — đó là bước tiếp theo (bạn tự làm theo guide/, hoặc nhờ tôi code từng task).
-
-Bạn muốn tôi bắt đầu code một task cụ thể không, hay cần tôi giải thích rõ thêm phần nào?
+# 03 — Trade-offs weighed (options + why rejected)
+
+> Trade-offs the agent weighed, the alternatives, and the precise reason the winner won.
+> Schema in `README.md` §3. Log the **alternatives**, not just the winner.
+
+> ⚠️ **INTEGRITY INCIDENT — 2026-07-13 (see N-020).** This file was found **overwritten with an
+> unrelated chat transcript**; the original TO-* entries had been destroyed. The workspace is not
+> a git repo (N-001), so there is no VCS history to restore from. The entries below were
+> **reconstructed from surviving cross-references** in `01-ai-decisions.md`, `02-deviations.md`,
+> `design.md`, and `design/02`, `design/03` (each reconstructed statement is traceable to those
+> files and is therefore verifiable, not fabricated). `TO-003` could **not** be recovered — no
+> surviving reference exists anywhere in the spec — so its ID is **QUARANTINED** below and MUST
+> NOT be reused. This incident is exactly why the integrity manifest (`00-INDEX.md`) and the
+> anti-drift gates (`GATES.md`) were added.
+
+---
+
+### TO-001: Reuse FUXA's security primitives vs. introduce new ones
+- Date: 2026-07-12 (reconstructed 2026-07-13)
+- Phase: Requirements
+- Status: Active — DECIDED (reuse)
+- Links: D-002, REQ-2, REQ-4, REQ-13
+- Context: FUXA already ships `jsonwebtoken@^9.0.3` and `bcryptjs@2.4.3` (verified in `server/package.json`) and a user/role store in `server/runtime/users`.
+- Decision: Reuse FUXA's existing `jsonwebtoken`, `bcryptjs`, and the user/role persistence, wrapped behind module Service/Store interfaces, rather than adding a new auth library or datastore.
+- Alternatives considered: (a) Passport.js / a dedicated auth stack — rejected: adds new attack surface and a second, competing auth path with no requirement demanding it yet. (b) A dedicated IAM database — rejected for the default path: migration cost with no current requirement (revisit under D-016 if the persistence-atomicity root fix requires it).
+- Rationale: Primitives are already present, dependency-pinned, and exercised by FUXA; reuse minimizes new attack surface and keeps a single credential store.
+- Impact / Risk: Couples the module to FUXA internals; mitigated by the adapter boundary (D-003, AC-16.5) so the backing store can be swapped without changing service interfaces.
+- Verification: design shows adapters over FUXA primitives; swapping the store must not change service interfaces.
+
+### TO-002: Non-expiring tokens (original AC-2.7) vs. a safe default TTL
+- Date: 2026-07-12 (reconstructed 2026-07-13)
+- Phase: Requirements
+- Status: Active — DECIDED (default TTL); enacted by DV-003
+- Links: D-004, DV-003, REQ-2 (AC-2.7, AC-2.8), P-008
+- Context: The original AC-2.7 issued a **non-expiring** access token when no expiry was configured. A non-expiring token cannot be revoked by expiry — a serious security downgrade for a commercial product.
+- Decision: When no expiry is configured, force a safe finite default TTL of **1 hour**; truly non-expiring tokens become an explicit, non-production, dev-only opt-in (AC-2.8).
+- Alternatives considered: Keep non-expiring default — rejected: no revocation window, unacceptable for "an toàn / thương mại". Require expiry always configured — rejected: a missing config would then hard-fail startup; a safe default is friendlier and still safe.
+- Rationale: Root-cause fix for token revocability; aligns with FUXA's own `tokenExpiresIn = 60*60` default while forbidding a silent non-expiry.
+- Impact / Risk: Access tokens still cannot be *actively* revoked before expiry — that residual gap is tracked separately under TO-008 / D-015 (session authority) and D-019 (refresh reuse detection).
+- Verification: requirements.md AC-2.7 reflects the default TTL; P-007/P-008 cover expiry behavior.
+
+### TO-003: **QUARANTINED — content lost in the 2026-07-13 integrity incident**
+- Date: unknown (original), quarantined 2026-07-13
+- Phase: unknown
+- Status: RETIRED (unrecoverable) — **ID MUST NOT be reused**
+- Links: none recoverable
+- Context: No surviving reference to `TO-003` exists anywhere in `requirements.md`, `design*`, `tasks.md`, or the other decision files. Its original subject and decision were destroyed when this file was overwritten (N-020).
+- Statement: Content is not recoverable and MUST NOT be guessed or reconstructed (doing so would be fabrication, which is forbidden). If a trade-off was genuinely made under this ID and is later remembered/rediscovered, record it under a **new** ID (e.g. TO-012+) and cross-link here — do not resurrect `TO-003`.
+- Verification: n/a — this is a tombstone entry preserving ID immutability (README §2).
+
+### TO-004: API behavior when the service layer is unavailable — fail-fast vs. queue/retry
+- Date: 2026-07-12 (reconstructed 2026-07-13)
+- Phase: Requirements
+- Status: Active — DECIDED (fail-fast)
+- Links: D-004, REQ-16 (AC-16.4)
+- Context: AC-16.4 asks what the API layer does when the service layer is unavailable at request time.
+- Decision: **Fail fast** — the API immediately returns an error response; it does not silently queue or retry the request.
+- Alternatives considered: Queue-and-retry / buffer — rejected: hides an outage from the caller, risks acting on stale state later, and complicates reasoning about auth (a security-sensitive path must never "eventually" authenticate). 
+- Rationale: Predictable, observable failure is safer than silent degradation for an auth boundary.
+- Impact / Risk: Callers must handle transient 5xx and retry at their layer; acceptable and standard.
+- Verification: AC-16.4 test asserts an immediate error when a service dependency is unavailable.
+
+### TO-005: First-admin bootstrap method — auto-seed(random)+forced-rotation vs. CLI vs. env-var
+- Date: 2026-07-12 (reconstructed 2026-07-13)
+- Phase: Requirements → Design (§12)
+- Status: Active — DECIDED (auto-seed random + mustRotate; CLI kept as ops fallback)
+- Links: D-005, D-012, DV-004, REQ-17, N-007, P-009
+- Context: RBAC/user-CRUD need an administrator to exist, but nothing specified how the first one is created. FUXA seeds `'123456'` with no rotation (N-007) — the exact weakness to eliminate.
+- Decision: On empty-admin first run, auto-seed exactly one admin with a **cryptorandom one-time secret** (never `'123456'`) and set `metadata.mustRotate=true` so only `account.rotatePassword` is permitted until a genuine rotation. Keep an interactive **CLI create-admin as a documented ops fallback**.
+- Alternatives considered: (a) Reuse `'123456'` + gate only — rejected: sign-in is not a gated operation, so an attacker who knows the default could sign in and self-rotate to seize the sole admin (hostile-rotation takeover). (b) Env-var seeded credential — rejected as the default: secret-in-env/secret-in-log risk. (c) CLI-only as the sole path — rejected as default: blocks first use until an operator runs it (kept only as fallback).
+- Rationale: Two independent axes (random secret + gate) each close a distinct takeover path; guarantees no usable known-default credential survives first boot.
+- Impact / Risk: The one-time secret disclosure channel is itself a weakness — see N-018 / D-022 (do not disclose via shared log).
+- Verification: P-009; §10.3 security test proves `'123456'` yields no usable authority and the module seed never verifies `'123456'`.
+
+### TO-006: Duplicate-create HTTP status — 400 vs 409
+- Date: 2026-07-12 (reconstructed 2026-07-13)
+- Phase: Design (§04)
+- Status: DECIDED (400) — revisitable
+- Links: REQ-5 (AC-5.2)
+- Context: A duplicate username on create is semantically a conflict (HTTP 409), but the master-map error table uses 400 for client input errors and FUXA uses 400 for user-write failures (verified).
+- Decision: Map duplicate to **400** with the stable identifier `duplicate_username`. The UI branches on the stable `error` id, not the numeric status, so AC-5.2 is unaffected either way.
+- Alternatives considered: 409 Conflict (more REST-idiomatic) — deferred; adoptable in review without changing the outcome contract.
+- Impact / Risk: Cosmetic status choice only.
+- Verification: §04 §8.2 mapping; a create-duplicate test asserts the stable `duplicate_username` identifier regardless of status.
+
+---
+
+## New trade-offs raised by the 2026-07-13 deep design review (OPEN — need user decision)
+
+> These are the trade-offs behind the design-defect resolutions proposed as OPEN decisions
+> D-014…D-023 in `01-ai-decisions.md`. They are logged here so the reasoning is preserved even
+> before a winner is chosen.
+
+### TO-007: Password hashing under bcrypt's 72-byte truncation (root fix for the P-002 defect, N-012)
+- Date: 2026-07-13
+- Phase: Design (§03) — OPEN
+- Status: OPEN (needs user decision) — see D-017
+- Links: REQ-4 (AC-4.5), P-002, N-012, D-002, D-008
+- Context: VERIFIED root cause — bcrypt hashes only the first 72 bytes of input. Therefore two DISTINCT passwords sharing their first 72 bytes cross-verify, making P-002 ("for any A≠B, verify(B,hash(A)) is false") mathematically false as stated. §03 §2.2 currently asserts, incorrectly, that truncation leaves P-002 "unaffected".
+- Options:
+  1. **Bound the domain**: validate/reject passwords whose UTF-8 length > 72 bytes (or a lower policy max), and restate P-002 over the bounded domain. Cheapest; keeps bcryptjs (TO-001/D-002). Con: an operator-visible length cap; still bcrypt.
+  2. **Pre-hash then bcrypt**: `bcrypt(base64(sha256(pw)))` so full-length inputs map to a fixed 44-byte digest before bcrypt. Removes the 72-byte cliff without a length cap. Con: bespoke scheme, needs domain-separation + a migration/version marker for existing cost-10 hashes; base64(sha256) is 44 bytes so no truncation.
+  3. **Migrate to Argon2id** with a scheme/version field. Strongest modern KDF; memory-hard. Con: new dependency (violates the spirit of TO-001/D-002 reuse), migration-on-verify needed for legacy bcrypt hashes.
+- Recommendation: **Option 1 now + design for Option 3 later** (scheme-version field from day one so Argon2id migration is non-breaking). Reason: Option 1 is a correct, verifiable, minimal root fix that unblocks P-002 immediately; adding a `hashScheme` version field now avoids a future breaking migration. Full justification in D-017.
+- Verification: corrected P-002 statement + a test proving two >72-byte near-duplicates are rejected at validation (Option 1) or do not cross-verify (Options 2/3).
+
+### TO-008: Session authority — stateless JWT vs. live-account re-resolution + revocation (root fix for N-011)
+- Date: 2026-07-13
+- Phase: Design (§05/§02) — OPEN
+- Status: OPEN (needs user decision) — see D-015
+- Links: REQ-2, REQ-10, N-011, D-007
+- Context: VERIFIED — §05 §4.1 builds the request `Identity.roles`/`groups` from the **token claims**, and only `mustRotate` is read from the live store. So a deleted / disabled / role-downgraded user keeps full authority until the token expires (up to the access-token TTL, extendable by refresh). This contradicts §12 §2.1's own claim that authority is resolved "from stored state rather than a long-lived token snapshot".
+- Options:
+  1. **Live re-resolution every request**: verify token (identity only) → load the current `User_Record` → reject if missing/disabled → derive roles/groups/permissions from the store → check a `tokenVersion`/`sessionVersion` for active revocation. Strong; costs one store read per request (already cached in `usersMap`, verified).
+  2. **Short access-TTL + accept the window**: keep token-derived authority but shrink the TTL (e.g. 5 min) so stale authority self-heals quickly. Cheaper; leaves a residual window and no active revocation.
+  3. **Token blacklist** on logout/delete/role-change. Partial; needs a shared store and still trusts token claims for roles.
+- Recommendation: **Option 1**. Reason: it is the only option that makes deletion/disable/downgrade take effect on the very next request (the behavior §12 §2.1 already claims to have), and the read is nearly free because `usersMap` is an in-memory cache FUXA already maintains. Full justification in D-015.
+- Verification: a test where a deleted/disabled/downgraded user presents a still-valid token and is denied on the next protected request.
+
+### TO-009: Refresh-token model — stateless reuse (current) vs. rotation with reuse-detection (root fix for N-015)
+- Date: 2026-07-13
+- Phase: Design (§02) — OPEN
+- Status: OPEN (needs user decision) — see D-019
+- Links: REQ-3 (AC-3.2, AC-3.3), N-015, RFC 9700
+- Context: VERIFIED — §02 reuses FUXA's stateless refresh verbatim; a "rotated" refresh issues new tokens but the OLD refresh JWT stays valid until its 7-day expiry (no server-side invalidation, no jti/family). §02 §7's "rotation limits replay" overstates the protection: a stolen refresh token replays for up to 7 days.
+- Options:
+  1. **Stateful rotation + reuse detection (RFC 9700)**: persist `family_id, jti, parent_jti, used/revoked/expired`, hash the refresh token at rest, atomic consume-and-rotate, revoke the whole family on replay detection, and revoke on logout/password-change/disable. Strong; needs a small refresh-token store.
+  2. **Keep stateless, shorten refresh TTL** to minutes/hours. Cheap; still no reuse detection, weaker.
+- Recommendation: **Option 1**, backed by the SQLite store FUXA already uses (TO-009 → D-019). Reason: refresh tokens are the long-lived credential; without server-side invalidation, logout and compromise-response are ineffective — a hard requirement for a commercial product.
+- Verification: a replay test — using a rotated (old) refresh token twice must fail the second time AND revoke the family.
+
+### TO-010: Login response for unknown user — uniform 401 vs. FUXA-compatible 404 (root fix for the enumeration oracle, N-011-adjacent)
+- Date: 2026-07-13
+- Phase: Requirements (AC-1.2/AC-1.3) — OPEN
+- Status: OPEN (needs user decision) — see DV-006
+- Links: REQ-1 (AC-1.2, AC-1.3)
+- Context: AC-1.2 returns **404** for an unknown username and AC-1.3 returns **401** for a wrong password. The status difference lets an attacker enumerate valid usernames (a username-enumeration oracle).
+- Options:
+  1. **Uniform 401** (+ constant-time compare against a dummy hash for unknown users) so unknown-user and bad-password are indistinguishable. Standard hardening.
+  2. **Keep 404/401** — matches current FUXA behavior; leaks username existence.
+- Recommendation: **Option 1**, which requires editing AC-1.2 (a deviation, DV-006). Reason: username enumeration is a well-known pre-attack step; for a commercial security product the enumeration oracle should be closed at the requirement level, not left as an implementation detail.
+- Verification: a test asserting identical status + body + comparable timing for unknown-user vs bad-password.
+
+### TO-011: Router cutover — replace FUXA routers at the composition root vs. new `/api/v2/identity/*` namespace (root fix for N-014)
+- Date: 2026-07-13
+- Phase: Design (§13 / composition root) — OPEN
+- Status: OPEN (needs user decision) — see D-014
+- Links: REQ-16, D-003, D-011, N-014
+- Context: VERIFIED — FUXA registers `/api/signin`, `/api/refresh`, `/api/signout`, `/api/users`, `/api/roles` in `server/api/index.js` before the module would mount. The module reuses the SAME URLs, so mounting AFTER FUXA (as the guide shows) means Express ends the response in FUXA's handler and the module's RBAC/service never runs. The design never resolved this precedence.
+- Options:
+  1. **Replace at the composition root**: mount the module router BEFORE FUXA's `usersApi`/`authApi` for these paths AND stop mounting FUXA's overlapping routers (or gate them off), so the module is authoritative. Preserves existing client URLs; one clear cutover point.
+  2. **New namespace `/api/v2/identity/*`**: mount alongside FUXA, migrate the client, then retire FUXA routes atomically. No collision; but requires client URL changes and a dual-stack period.
+- Recommendation: **Option 1** if the module fully supersedes FUXA auth (matches D-011 SUPERSEDE intent); Option 2 only if a gradual dual-run is required. Reason: the module was explicitly designed to SUPERSEDE (D-011), so a clean replacement at the single mount point is the honest realization of that intent and avoids permanently shadowed code. Full justification in D-014.
+- Verification: an integration test that a request to `/api/users` without a valid RBAC permission is denied by the module (403), proving the module — not FUXA's admin-group gate — handled it.

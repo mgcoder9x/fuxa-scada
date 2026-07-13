@@ -3,6 +3,12 @@
 > Tương ứng **Task 16** trong `../tasks.md`. Requirement: 11.1–11.5.
 > Thiết kế: `../design/07-ui-login-page.md`. Không sở hữu property (test component).
 
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo DV-006
+> Cách hiển thị "401 và 404 cùng một câu" của guide này **vẫn enumeration-safe**, nhưng theo DV-006 **server
+> nay trả 401 cho CẢ hai** trường hợp (unknown-user và sai mật khẩu) — không còn 404 ở sign-in. Trang login
+> chỉ cần map `invalid_credentials` (và `too_many_attempts`/`missing_field`) sang thông báo chung; nhánh xử lý
+> `user_not_found`/404 là dư thừa cho sign-in (có thể bỏ). Test nên giả lập **401** cho cả hai thay vì 404.
+
 ## Mục tiêu
 
 Có trang đăng nhập routed (mới, thay dialog cũ của FUXA — D-011): form username/password, chặn
