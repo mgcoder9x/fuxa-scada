@@ -41,10 +41,10 @@
 | Prefix | Highest used | Notes |
 |--------|--------------|-------|
 | `REQ-` | 17 | |
-| `D-`   | 023 | D-014…D-023 are **Active (CONFIRMED)** (2026-07-13) — all deep-review resolutions enacted; no OPEN decision remains |
+| `D-`   | 025 | D-014…D-023 are **Active (CONFIRMED)** (2026-07-13); **D-024** (store-adapter own-connection reads per D-015; plain-INSERT role create per AC-9.5); **D-025** (2026-07-13) — reject malformed UTF-16 (lone surrogates) at the Password_Hasher seam + boundary validation, fixes the N-027 bcryptjs ~9.6s DoS. All Active (CONFIRMED, test-verified). No OPEN decision remains |
 | `DV-`  | 008 | DV-006…DV-008 are **Active (CONFIRMED)** (2026-07-13) — requirement refinements enacted in `requirements.md`; no OPEN deviation remains |
 | `TO-`  | 011 | **TO-003 QUARANTINED (unrecoverable, N-020) — do not reuse** |
-| `N-`   | 024 | N-010…N-021 added 2026-07-13; N-022 (deps-not-installed → **RESOLVED**, deps now present) + N-023 (chai@5 ESM → node:assert; fast-check@3.23.2) + N-024 (2026-07-13 independent verification pass + anti-drift hardening) added 2026-07-13 |
+| `N-`   | 027 | N-010…N-021 added 2026-07-13; N-022 (deps-not-installed → **RESOLVED**, deps now present) + N-023 (chai@5 ESM → node:assert; fast-check@3.23.2) + N-024 (2026-07-13 independent verification pass + anti-drift hardening) + N-025 (fast-check absent on THIS machine at session start → re-added @3.23.2; npx/locked-file test-runner gotcha; P-005 re-verified green) + N-026 (Task 2: `User_Store.get` fails closed on corrupt `info`) + N-027 (Task 3.2: VERIFIED bcryptjs ~9.6s-then-throw on a lone-surrogate password = unauthenticated CPU-DoS via login/JSON + DV-006 dummy-hash; RESOLVED by D-025 malformed-UTF-16 guard) added 2026-07-13 |
 | `P-`   | 016 | P-013 (D-015) + P-014 (D-014/018) + P-015 (D-019) + P-016 (D-020 concurrency) added 2026-07-13 |
 | `TASK-`| see tasks.md | |
 

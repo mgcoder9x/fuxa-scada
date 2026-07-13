@@ -263,3 +263,91 @@
   executed to flip the corresponding traceability §D rows to `tested`.
 - Verification: re-run the `userTriggered` "Auth Module — Anti-Drift Audit" hook; re-read the cited
   files; `Test-Path server/node_modules/<pkg>` for each dependency above.
+
+### N-025: On this machine `fast-check` was absent at session start (re-added @3.23.2); test-runner gotcha
+- Date: 2026-07-13
+- Phase: Implementation (test baseline / G5)
+- Status: Active
+- Links: N-022, N-023, N-024, N-001, traceability §D (P-005), design.md Testing Strategy
+- Statement: VERIFIED on disk at the start of this session — although N-023/N-024 assert
+  `fast-check@3.23.2` is an installed devDependency, `Test-Path server/node_modules/fast-check`
+  returned **False** on this machine (base `server/node_modules` present with `mocha@10.8.2`,
+  `sinon`, `bcryptjs`, `jsonwebtoken`, `winston`, `sqlite3`; Node **v25.2.1**, `node.exe` from
+  `C:\nvm4w\nodejs`). Root cause: `node_modules` is gitignored (end.md §7), so a checkout carries
+  the base install but not necessarily the separately-added `fast-check` devDep. Remediation:
+  re-ran `npm install --save-dev fast-check@3.23.2` under `server/` (added 2 packages; version
+  re-verified = 3.23.2 — matches the N-023 pin, no drift in the pinned version).
+- Test-runner gotcha (VERIFIED, extends N-001): running `npx mocha` from the repo root prompts to
+  install `mocha@11.7.6` (npx ignores the server-local `mocha@10.8.2`) and, once launched
+  interactively, held/locked the output file so subsequent `>` redirections to the SAME filename
+  returned stale content + exit -1 — which masqueraded as a systemic failure. Reliable method:
+  run tests from `server/` via Mocha's programmatic API (`new Mocha().addFile(...).run(...)`) or
+  `npm test`, and always capture to a FRESH output filename. Plain `node` and file redirection work
+  correctly (confirmed: `node -e` prints `v25.2.1`).
+- Result: with `fast-check@3.23.2` present, `server/test/auth-management/serialization.test.js`
+  runs GREEN — **5 passing** incl. `Property 5 (P-005)` at ≥100 iters (structural-identity
+  round-trip) + serialize/deserialize resilience units. P-005 is thus independently re-verified on
+  this machine (traceability §D P-005 row already marked TESTED remains valid).
+- Impact / Risk: None to the design; this is an environment-provisioning + test-invocation note.
+  Future sessions on a fresh checkout MUST `npm install` under `server/` AND confirm
+  `fast-check@3.23.2` before running property tests (do not trust the ledger's "present" claim).
+- Verification: `Test-Path server/node_modules/fast-check` = True; its `package.json` version =
+  3.23.2; re-run the serialization suite via the programmatic runner → 5 passing.
+
+### N-026: `User_Store.get` fails CLOSED on a corrupt `info` (returns the record with empty roles/metadata, does not throw)
+- Date: 2026-07-13
+- Phase: Implementation (Task 2 — §06)
+- Status: Active
+- Links: REQ-13 (AC-13.4), §06 §7 (fail-closed error handling), D-015 (store is authority), D-024
+- Statement: The design fixes `readAll` resilience explicitly (AC-13.4 — a corrupt row becomes an
+  `errors` entry, healthy rows still returned) but does NOT specify the single-lookup `get`'s
+  behavior when a row's `info` is unparseable. Implementation decision (`FuxaUserStoreAdapter.get`):
+  a corrupt `info` fails **closed** — `get` returns the record with `roles: []` and `metadata: {}`
+  (least privilege) rather than (a) throwing or (b) returning `undefined`. Rationale: the user's
+  credential columns (`username`/`password`) are still valid, so returning `undefined` would make a
+  valid credential spuriously "unknown" (an availability/lockout risk during sign-in); throwing
+  would break the sign-in path for one bad metadata blob. Returning the record with **no roles** is
+  the safe authorization posture (the account can authenticate but carries zero elevated authority
+  until its metadata is repaired), consistent with §06 §7's fail-closed intent and D-015 (authority
+  is re-resolved from the store each request, so zero roles = zero privilege).
+- Impact / Risk: A user whose stored `info` is corrupted silently loses their role assignments until
+  the metadata is fixed (they can still sign in). This is intentional (fail-closed). The corruption
+  is still SURFACED via `readAll().errors` (List Users), so an admin can detect and remediate it.
+- Verification: `store-adapters.test.js` "resilient readAll … get fails closed" — a directly-inserted
+  corrupt `info` row is reported in `readAll().errors` AND `get()` returns it with `roles:[]`/`metadata:{}`;
+  no exception propagates.
+
+### N-027: VERIFIED SECURITY DEFECT — bcryptjs burns ~9.6s then throws on a lone-surrogate password (unauthenticated CPU-DoS)
+- Date: 2026-07-13
+- Phase: Implementation (Task 3.2 — §03), surfaced by the P-002 property test
+- Status: **RESOLVED 2026-07-13 by D-025** (Password_Hasher malformed-UTF-16 guard); boundary
+  defense-in-depth (User_Service 9.1 / Authentication_Service 7.1) is a follow-up recorded in D-025.
+- Links: REQ-4, P-002, D-025, DV-006 (dummy-hash path amplifies it), N-012 (same "bound the bcrypt input domain" class), design/03 §2.2
+- Statement: VERIFIED empirically against the vendored `bcryptjs` on this machine (Node v25.2.1,
+  `server/node_modules/bcryptjs`). When the input string contains a **lone (unpaired) UTF-16
+  surrogate** (a 0xD800–0xDFFF code unit not part of a valid pair — malformed UTF-16), bcryptjs's
+  pure-JS UTF-16→UTF-8 encoder takes a pathological path: measured `bcrypt.compareSync(String.fromCharCode(0xD83D), hash)`
+  = **9578 ms**, then throws `RangeError: Invalid array length` from `utfx.encodeUTF8`→`out.push(b)`
+  (stack: `stringToBytes` → `utfx.UTF16toUTF8` → `encodeUTF8`, `bcrypt.js` lines ~364/524/594/629).
+  The slowness is in the ENCODER (before the cost rounds), so it is **cost-independent** (~9.6s at
+  cost 4). Reproduction (guarded): a temp probe timing `compareSync(loneHi, hash)` printed
+  `9578ms RangeError: Invalid array length`. A single lone surrogate suffices; well-formed astral
+  characters (e.g. U+1F600, and even planes-5–16 code points) hash in a few ms — so the trigger is
+  *malformedness*, not size or plane.
+- Attack surface (verified reachable): a lone surrogate arrives over the login API via
+  `JSON.parse('{"password":"\\uD83D"}')` — `JSON.parse` produces a JS string with a lone surrogate.
+  The Authentication_Service (Task 7) verifies the submitted password with `Password_Hasher.verify`,
+  AND — per DV-006 — runs a **dummy-hash `verify` for UNKNOWN users** to equalize timing. So an
+  **unauthenticated** attacker can send `{"username":"nobody","password":"\uD83D"}` and force ~9.6s
+  of single-threaded server CPU per request → asymmetric DoS (cheap request, huge server cost),
+  trivially amplified by concurrency. The ≤72-byte length check (AC-4.6) does NOT protect:
+  `Buffer.byteLength(loneSurrogate,'utf8')` reports 3 (Node substitutes U+FFFD), so the length gate
+  passes and bcrypt is still reached.
+- Root cause: `bcryptjs`'s encoder mishandles malformed UTF-16; the module fed it a raw JS string
+  without a well-formedness guard. We do not edit the vendored `bcryptjs` (D-003), so the fix belongs
+  at the module's Hash seam (the single site feeding bcryptjs) + boundary input validation.
+- Verification: `test/auth-management/password-hasher.test.js` "malformed UTF-16 … rejected CHEAPLY"
+  — three lone-surrogate variants (incl. the `JSON.parse('"\\uD83D"')` form) all return `verify→false`
+  in <1000ms total (was ~9.6s each), and `hash` throws `invalid_password_encoding` fast. Also: the
+  P-002 property generator was corrected to drop the last CODE POINT (not code unit) so it never
+  fabricates a lone surrogate (that mutation bug is what first exposed N-027 as a 30s test timeout).

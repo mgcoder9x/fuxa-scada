@@ -42,50 +42,59 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - **Property 5: Metadata serialization is an identity round-trip**
     - **Validates: Requirements 13.3** — (P-005; owner §06); JSON-safe generator per §06 §4.2 (exclude undefined/function/NaN/±Infinity/-0/Date), deep-equal, min 100 iters
     - _DONE 2026-07-13: `server/test/auth-management/serialization.test.js` — P-005 property @200 iters + serialize/deserialize contract & resilience; 5 passing (mocha + node:assert + fast-check, N-023)_
-  - [~] 2.3 Implement `FuxaUserStoreAdapter` over `server/runtime/users`
+  - [x] 2.3 Implement `FuxaUserStoreAdapter` over `server/runtime/users`
     - Implement `get`/`readAll`/`create`/`update`/`delete` mapping `User_Record ↔ { username, fullname, password, groups, info }`; own the `info ↔ { roles, metadata }` split/compose (§06 §3.2)
     - Implement the **double-hash-hazard resolution** (§06 §5): write non-secret columns via `setUsers` (password omitted, keeps `usersMap` coherent) and write `passwordHash` **verbatim** via a single parameterized `UPDATE users SET password=? WHERE username=?` inside one transaction; omit → retain existing hash; `delete` relies on `removeUsers` (row + `usersMap.delete`)
     - Route `readAll` through resilient `deserialize` (AC-13.4); exclude the hash from read projections feeding `UserView`
     - _Requirements: 13.1, 5.4, 7.3, 8.1, 8.2, 4.2, 6.2, 16.5_
-  - [~] 2.4 Implement `FuxaRoleStoreAdapter` over `server/runtime/users`
+  - [x] 2.4 Implement `FuxaRoleStoreAdapter` over `server/runtime/users`
     - Map `Role{ id, name, permissions } ↔ roles(name=role.id, value=JSON(role))` (§06 §3.4); `get`/`readAll`/`create`/`update` (whole-value replace); `delete(ids)` delegates to `removeRoles` (prune `info.roles` per user + delete role)
     - Route `readAll` through resilient `deserialize` to close the verified `getRoles` no-try/catch gap (AC-13.4, N-009)
     - _Requirements: 13.2, 9.1, 9.2, 9.3, 9.4, 16.5_
-  - [ ]* 2.5 Write property test for User_Record write→read round-trip
+  - [x]* 2.5 Write property test for User_Record write→read round-trip
     - **Property 3: User_Record write→read round-trip**
     - **Validates: Requirements 13.1** — (P-003; owner §06); assert username/fullname/roles(set)/metadata(deep) equal, min 100 iters
-  - [ ]* 2.6 Write property test for Role write→read round-trip
+    - _DONE 2026-07-13: `store-adapters.test.js` — P-003 @150 iters end-to-end through the own-connection read path (D-024), real temp sqlite; passing_
+  - [x]* 2.6 Write property test for Role write→read round-trip
     - **Property 4: Role write→read round-trip**
     - **Validates: Requirements 13.2** — (P-004; owner §06); assert name + permission-set equal, min 100 iters
-  - [ ]* 2.7 Write unit/regression tests for the store adapters
+    - _DONE 2026-07-13: `store-adapters.test.js` — P-004 @150 iters end-to-end; passing_
+  - [x]* 2.7 Write unit/regression tests for the store adapters
     - Double-hash regression (stored column verifies plaintext with a single `bcrypt.compare`); retain-on-omit (hash byte-identical after password-less update); resilient `readAll` isolates one corrupt `info`/role `value` (AC-13.4); delete evicts `usersMap`
     - _Requirements: 4.2, 7.3, 13.4, 8.2_
-  - [ ] 2.8 Implement the single-transaction atomic write path (D-016, fixes N-010)
+    - _DONE 2026-07-13: `store-adapters.test.js` — double-hash regression + retain-on-omit + resilient readAll (user + role gap) + get fail-closed (N-026) + atomic duplicate reject (user AC-5.2 / role AC-9.5) + wholesale role update + role-delete prune + delete-removes-row; 11 passing total_
+  - [x] 2.8 Implement the single-transaction atomic write path (D-016, fixes N-010)
     - Replace the two-connection scheme: the adapter writes ALL columns (non-secret + verbatim password hash) in ONE `BEGIN…COMMIT` transaction on its **own** sqlite connection (still bypassing `setUser` re-hash), then calls `setUsers(password omitted)` as a best-effort idempotent `usersMap` cache refresh outside the transaction; a crash can never leave a row with a stale/NULL password (§06 §5.2/§5.3/§5.4)
     - _Requirements: 13.1, 4.2, 7.3_
-  - [ ] 2.9 Implement atomic create + last-admin concurrency serialization (D-020, fixes N-016)
+    - _DONE 2026-07-13: `store/fuxa-auth-db.js` `transaction()` = `BEGIN IMMEDIATE…COMMIT`; `FuxaUserStoreAdapter.create/update` writes the full row (verbatim hash) in one txn + best-effort `_refreshCache` via `setUsers(pwd-omitted)`; double-hash regression + retain-on-omit tests green_
+  - [~] 2.9 Implement atomic create + last-admin concurrency serialization (D-020, fixes N-016)
     - `create` uses a plain `INSERT` so a duplicate username is rejected atomically by the primary-key conflict (no read-then-write TOCTOU, AC-5.2/AC-9.5); the last-admin guard delete runs inside a `BEGIN IMMEDIATE` transaction so two concurrent last-admin deletes cannot both pass the count check (§04 §3.2/§6.5, §06 §5.4)
     - _Requirements: 5.2, 8.5, 9.5, 13.1_
+    - _PARTIAL 2026-07-13: the **atomic create** half is DONE — `FuxaUserStoreAdapter.create` / `FuxaRoleStoreAdapter.create` use plain `INSERT` → `DuplicateKeyError` (code `duplicate_key`), tested for both users (AC-5.2) and roles (AC-9.5) with no-mutation assertions. The **last-admin `BEGIN IMMEDIATE` guard** is deferred to Task 9 (`User_Service.delete` is the transaction site); `FuxaAuthDb.transaction()` provides the `BEGIN IMMEDIATE` primitive it will use. P-016 (2.10) tested there._
   - [ ]* 2.10 Write property test for concurrency invariants
     - **Property 16: Under any interleaving, admin count never reaches zero and concurrent same-username creates yield exactly one record**
     - **Validates: D-020, N-016, AC-8.5, AC-5.2** — (P-016; owner §04, mechanism §06); model interleaved create/delete histories; min 100 iters
 
-- [ ] 3. Password_Hasher and the bcrypt seam (§03)
+- [x] 3. Password_Hasher and the bcrypt seam (§03)
   - [x] 3.1 Implement the `BcryptHasherAdapter` (Hash seam)
     - Create `adapters/fuxa-bcrypt.adapter.js`: the sole importer of `bcryptjs`, wrapping `hashSync`/`compareSync`; configurable cost resolved at construction
     - _Requirements: 4.1_
-  - [ ] 3.2 Implement `Password_Hasher` service
+  - [x] 3.2 Implement `Password_Hasher` service
     - Create `services/password-hasher.js`: `hash(plaintext)` (salted, one-way, default cost 12, total over all strings) and `verify(plaintext, hash)` (defensive false on null/malformed, never throws); no `bcryptjs` import here
     - _Requirements: 4.1, 4.2_
-  - [ ]* 3.3 Write property test: hash verifies its own plaintext
+    - _DONE 2026-07-13: `services/password-hasher.js` injects the bcrypt Hash-seam adapter (no bcrypt import); defensive `verify`; **malformed-UTF-16 guard (D-025)** — `verify`→false fast / `hash`→throws `invalid_password_encoding`, closing the verified N-027 ~9.6s bcryptjs DoS. Follow-up (D-025): User_Service 9.1 + Authentication_Service 7.1 must also reject malformed UTF-16 at the boundary (defense-in-depth)_
+  - [x]* 3.3 Write property test: hash verifies its own plaintext
     - **Property 1: Password hash verifies its own plaintext**
     - **Validates: Requirements 4.3, 4.4** — (P-001; owner §03); two hashes each verify and differ (random-salt witness); generator per §03 §8.1 (ASCII/Unicode/empty/long/near-dup); construct seam at cost 4; min 100 iters
-  - [ ]* 3.4 Write property test: hash rejects a different plaintext
+    - _DONE 2026-07-13: `password-hasher.test.js` — P-001 @150 iters (verify own plaintext + two-hashes-differ witness); passing_
+  - [x]* 3.4 Write property test: hash rejects a different plaintext
     - **Property 2: Password hash rejects a different plaintext**
     - **Validates: Requirements 4.5** — (P-002; owner §03); `fc.tuple` with `.filter(a!==b)`, bias near-duplicates; min 100 iters
-  - [ ]* 3.5 Write unit/edge tests for the hasher
+    - _DONE 2026-07-13: `password-hasher.test.js` — P-002 @150 iters over the ≤72-byte WELL-FORMED domain; generator rebuilt rejection-free + code-point-safe (mode-1 drops last code point, not code unit) to avoid fabricating lone surrogates; passing_
+  - [x]* 3.5 Write unit/edge tests for the hasher
     - Empty-string hashes/verifies; `verify` returns false (no throw) for null/''/malformed; a cost-10 (FUXA) digest still verifies
     - _Requirements: 4.3, 4.4, 4.5_
+    - _DONE 2026-07-13: `password-hasher.test.js` — empty-string base case; defensive verify (null/''/malformed hash + non-string plaintext); **malformed-UTF-16 fast-reject (D-025/N-027 regression guard)**; FUXA cost-10 interop; unconfigured seam = cost 12 (D-008)_
 
 - [ ] 4. Checkpoint — foundation and hashing
   - Ensure all tests pass, ask the user if questions arise.

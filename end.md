@@ -1,4 +1,4 @@
-# SESSION HANDOFF — auth-user-management (FUXA) — 2026-07-13
+# SESSION HANDOFF — auth-user-management (FUXA) — updated 2026-07-13 (session 3)
 
 > **Purpose of this file.** You are continuing this work on a different machine. Read this file
 > first, in full, then follow "§0 DO THIS FIRST". This project runs under a **strict anti-drift
@@ -10,218 +10,266 @@
 ## 0. DO THIS FIRST (on the new machine, before touching anything)
 
 1. **Pull the branch** (see §7 for git). Confirm the working tree matches the remote.
-2. **Read the anti-drift steering**: `.kiro/steering/auth-user-management-antidrift.md` (it auto-loads
+2. **Read the anti-drift steering**: `.kiro/steering/auth-user-management-antidrift.md` (auto-loads
    when you open any `auth-user-management/**` file, but read it consciously).
 3. **Run the Integrity Check**: open `.kiro/specs/auth-user-management/decisions/00-INDEX.md` and
    execute its §4 procedure (verify every file's markers + ID high-water marks + no cross-domain
    corruption). Then read the WHOLE `decisions/` folder.
 4. **Obey `decisions/GATES.md`.** Current gate state: **G0–G4 PASSED; implementation is UNBLOCKED,
    under G5 (per-task Definition of Done).**
-5. **Install server deps if missing**: `cd server && npm install` (they were installed on the old
-   machine — see §5; a fresh clone will need this because `node_modules` is gitignored).
-6. Only then continue implementation (§4 "WHAT REMAINS").
+5. **Install server deps if missing**: `cd server && npm install`, THEN confirm
+   `Test-Path server/node_modules/fast-check` = True and its version = **3.23.2** (a fresh checkout
+   carries the base install but not always the separately-added `fast-check` devDep — see N-025).
+   `node_modules` is gitignored.
+6. **Recreate the temp test runner** (deleted at each session end — see §5 "test-runner method").
+7. Only then continue implementation (§4 "WHAT REMAINS"). Next up: **Task 5 — Token_Service**.
 
 **Working principles the user requires (non-negotiable):**
 - Prepare a clear, verifiable design → re-read and validate it → only then implement.
 - Fix the **root cause**, never the leaf. A symptom-only patch must be logged as a risk.
-- **No fabrication, no speculation.** Verify every FUXA claim against source; else mark `UNVERIFIED`.
-- **One step at a time**, each with a precise factual reason; the user approves per step.
-- Do **not** economize tokens at the cost of correctness. Aim for commercial-grade, long-term-safe.
+- **No fabrication, no speculation.** Verify every FUXA/library claim against source or a run; else
+  mark `UNVERIFIED`.
+- **One step at a time**, each with a precise factual reason; the user approves per step (the user
+  repeatedly says "cực sâu để tiếp tục chính xác nhất" = continue deeply/accurately — standing
+  approval to proceed carefully).
+- Do **not** economize tokens at the cost of correctness. Commercial-grade, long-term-safe.
+- Respond in **Vietnamese**.
 
 ---
 
 ## 1. WHAT THIS PROJECT IS
 
-FUXA (an open-source SCADA/HMI, version 1.3.4-2860) is the host application in this workspace. We
-are adding a commercial-grade **Authentication + User Management + RBAC** capability as a
+FUXA (open-source SCADA/HMI, version **1.3.4-2860**) is the host app in this workspace. We are
+adding a commercial-grade **Authentication + User Management + RBAC** capability as a
 **self-contained module**, NOT by editing FUXA's core in place.
 
-- **Architecture decision (D-003, CONFIRMED):** the module is a bounded, layered subsystem
-  (UI / API / Service / Store) living inside the FUXA workspace. It touches FUXA core **only**
-  through thin adapters (JWT helper, bcrypt, user/role store) + a **single** router-mount line.
-  Rationale: FUXA will receive upstream upgrades; a bounded module minimizes merge conflicts and is
-  independently testable. New server code lives under `server/auth-management/`; new client code
-  under `client/src/app/auth-management/`.
-- Scope covers 17 requirements (REQ-1…REQ-17): login, token issue/verify, refresh/sign-out, password
-  security, user CRUD, RBAC, authorization enforcement, login page, user-management page,
-  serialization round-trip, audit logging, brute-force protection, modular architecture, and
-  administrator bootstrap.
+- **Architecture (D-003, CONFIRMED):** a bounded, layered subsystem (UI / API / Service / Store)
+  inside the FUXA workspace, touching FUXA core **only** through thin adapters (JWT helper, bcrypt,
+  user/role store) + a **single** router-mount line. New server code under `server/auth-management/`;
+  new client code under `client/src/app/auth-management/`.
+- Scope = 17 requirements (REQ-1…REQ-17).
 
 ---
 
-## 2. THE LEDGER — your source of truth (the "4 things" the user asked for)
+## 2. THE LEDGER — your source of truth ("the 4 things")
 
 Folder: `.kiro/specs/auth-user-management/decisions/`
 
-| File | Holds | High-water mark |
-|------|-------|-----------------|
-| `01-ai-decisions.md` | AI decisions the spec didn't state (D-001…**D-023**) | D-023 |
-| `02-deviations.md`   | Where AI changed vs. the original request (DV-001…**DV-008**) | DV-008 |
-| `03-tradeoffs.md`    | Trade-offs weighed (TO-001…**TO-011**; **TO-003 QUARANTINED**, never reuse) | TO-011 |
-| `04-notes.md`        | Facts/risks/gotchas you should know (N-001…**N-024**) | N-024 |
-| `traceability.md`    | Anti-drift engine: REQ⇄DES⇄TASK⇄TEST (§A–§G) | — |
+| File | Holds | High-water mark (CURRENT) |
+|------|-------|---------------------------|
+| `01-ai-decisions.md` | AI decisions the spec didn't state (D-001…**D-025**) | **D-025** |
+| `02-deviations.md`   | Where AI changed vs. the original request (DV-001…**DV-008**) | **DV-008** |
+| `03-tradeoffs.md`    | Trade-offs weighed (TO-001…**TO-011**; **TO-003 QUARANTINED**, never reuse) | **TO-011** |
+| `04-notes.md`        | Facts/risks/gotchas (N-001…**N-027**) | **N-027** |
+| `traceability.md`    | Anti-drift engine: REQ⇄DES⇄TASK⇄TEST (§A–§G); §D is the live Design→Task→Test status | — |
 | `00-INDEX.md`        | Integrity manifest + §4 Integrity Check + §2 ID high-water + §3 incident log | — |
-| `GATES.md`           | Phase gates G0–G5 + the resolution roadmap + current position | — |
+| `GATES.md`           | Phase gates G0–G5 + roadmap + current position | — |
 | `README.md`          | Ledger rules + ID scheme + anti-drift protocol §4 | — |
+| Properties `P-`      | P-001…**P-016** | **P-016** |
 
-**Hard rules:** ledger files are **append-only** (never overwrite; mark superseded, never delete/reuse
-an ID). Respect the high-water marks above. `TO-003` is a quarantined tombstone.
+**Hard rules:** ledger files are **append-only** (never overwrite; mark superseded, never
+delete/reuse an ID). Respect the high-water marks above. `TO-003` is a quarantined tombstone.
+ON EXIT of any turn that changed anything: update the relevant ledger entry + traceability §D/§F +
+`00-INDEX §2` high-water; log new defects/decisions BEFORE finishing; re-run the Integrity Check if
+a ledger file was touched.
 
 ---
 
-## 3. WHAT HAS BEEN DONE (verified on disk 2026-07-13, note N-024)
+## 3. WHAT HAS BEEN DONE (verified on disk 2026-07-13)
 
-### 3a. Design defect resolution — COMPLETE
-A deep review found 11 latent design defects (N-010…N-019, N-021) and 3 requirement refinements
-(DV-006/007/008). ALL are now RESOLVED and enacted in the design/requirements. Decisions D-014…D-023
-are all `Active (CONFIRMED)`. Summary:
+### 3a. Design defect resolution — COMPLETE (unchanged)
+All 11 latent design defects (N-010…N-019, N-021) + 3 requirement refinements (DV-006/007/008) are
+RESOLVED and enacted. Decisions D-014…D-023 are all `Active (CONFIRMED)`. Gates **G0–G4 PASSED**.
 
-- **Wave A (CRITICAL, gate G2 — PASSED):** N-010 persistence atomicity (D-016), N-011 live session
-  authority (D-015 + P-013), N-012 bcrypt-72-byte / false P-002 (D-017 + DV-007), N-014 router
-  cutover SUPERSEDE (D-014 + P-014), N-013 rotate-password endpoint (D-018).
-- **Wave B (HIGH, gate G4 — PASSED):** N-015 refresh rotation + reuse detection RFC 9700 (D-019 +
-  P-015), N-016 concurrency TOCTOU (D-020 + P-016), N-017 JWT hardening (D-021), N-018 bootstrap
-  secret to log (D-022 secure enrollment channel).
-- **Wave C (MEDIUM):** N-019 brute-force shared store + adaptive throttle (DV-008), D-023 dedicated
-  audit sink, DV-006 uniform-401 enumeration hardening, N-021 traceability §D populated (G3).
+### 3b. Implementation progress under G5 — code + REAL tests GREEN
 
-### 3b. Gates — G0…G4 PASSED
-Implementation is UNBLOCKED under **G5** (per-task DoD). See `GATES.md` for the exact checklist.
+**Test toolchain (N-023/N-025):** `mocha@10.8.2` + Node's built-in **`node:assert/strict`** (chai@5
+is ESM-only, do NOT use it) + `sinon` + **`fast-check@3.23.2`** for PBT. Run via a **temp
+programmatic Mocha runner** (see §5). **Full auth-management suite currently: 42 passing.**
 
-### 3c. Foundational code implemented (matches the CORRECTED design)
-Under `server/auth-management/`:
-- `models/` — `user-record.js`, `role.js`, `permission.js`, `audit-event.js` (INV-1…INV-8) — task 1.1
-- `store/serialization.js` — resilient JSON parse — task 2.1 (+ `store/*.interface.js`, `services/interfaces.js`)
-- `adapters/fuxa-bcrypt.adapter.js` — sole `bcryptjs` importer — task 3.1
-- `adapters/fuxa-jwt.adapter.js` — sole `jsonwebtoken`/`jwt-helper` importer — task 5.1
-- `services/brute-force.js` — adaptive backoff + pluggable `BruteForceStore` + monotonic clock — task 6.1
-- `services/audit-logger.js` — dedicated `fuxa-audit.log` winston sink + `health()` + fallback + hash-chain — task 11.1
-- `index.js` — composition-root placeholder
+Completed + verified this session (in bottom-up order):
 
-Under `client/src/app/auth-management/`:
-- `services/session.store.ts` — reuses FUXA session plumbing, first-class `roles` (D-007) — task 15.1
-- `services/module-permission.service.ts`, `guards/user-read.guard.ts` — management-route gate
+- **Task 1 (models/scaffolding)** — done earlier (`models/`, interfaces, `store/serialization.js`).
+- **Task 2 — Store layer (§06) — DONE + TESTED.**
+  - `store/fuxa-auth-db.js` — module-owned `sqlite3` connection to `users.fuxap.db` (WAL +
+    busy_timeout, `BEGIN IMMEDIATE` transaction helper, generic `DuplicateKeyError` code
+    `duplicate_key`). Required because FUXA exposes no raw-SQL/db-handle (verified) and `setUser`
+    re-hashes any truthy pwd (the double-hash hazard).
+  - `adapters/fuxa-user-store.adapter.js` (2.3/2.8) — `get`/`readAll`/`create`/`update`/`delete`;
+    **D-016** single-transaction full-row verbatim-hash write on its own connection + best-effort
+    `setUsers(pwd-omitted)` cache refresh; retain-on-omit (AC-7.3); `info↔{roles,metadata}`
+    split/compose; resilient `readAll`; `get` fails **closed** on corrupt `info` (**N-026**).
+  - `adapters/fuxa-role-store.adapter.js` (2.4) — `Role↔roles(name=id,value=JSON)`; resilient
+    `readAll` closes the FUXA `getRoles` no-try/catch gap (N-009); plain-INSERT create = atomic
+    dup rejection (AC-9.5); delete prunes `info.roles` via `runtime.users.removeRoles` or an
+    own-connection fallback.
+  - `test/auth-management/store-adapters.test.js` — **11 passing**: **P-003** user round-trip +
+    **P-004** role round-trip @150 iters (real temp sqlite), double-hash regression, retain-on-omit,
+    atomic dup reject (user+role, no mutation), resilient readAll (user+role gap), get fail-closed,
+    role-delete prune, delete-removes-row.
+  - **D-024** logged: store adapters read via their OWN connection (identical SELECT to FUXA;
+    faithful to D-015 "authority from the store"), `runtime.users` used only for best-effort cache
+    coherence; role `create` uses plain INSERT (AC-9.5). Active (CONFIRMED, test-verified).
+  - **PARTIAL 2.9 / DEFERRED 2.10:** the atomic-create half of D-020 is done+tested; the last-admin
+    `BEGIN IMMEDIATE` guard + **P-016** concurrency property are DEFERRED to **Task 9**
+    (`User_Service.delete` is the transaction site). `FuxaAuthDb.transaction()` provides the
+    `BEGIN IMMEDIATE` primitive it will use.
+- **Task 3 — Password_Hasher (§03) — DONE + TESTED.**
+  - `adapters/fuxa-bcrypt.adapter.js` (3.1, pre-existing) — SOLE `bcryptjs` importer; cost default
+    12 (D-008), tests pass 4.
+  - `services/password-hasher.js` (3.2) — injects the Hash-seam adapter (NO bcrypt import); `hash`
+    total/salted; `verify` defensive→false (never throws).
+  - **D-025 / N-027 — VERIFIED SECURITY FIX (important):** a **lone UTF-16 surrogate** makes
+    `bcryptjs` burn **~9.6s then throw** `RangeError` in its UTF-8 encoder (measured 9578ms,
+    cost-independent). It is reachable UNAUTHENTICATED via the login API
+    (`JSON.parse('{"password":"\uD83D"}')`) + the DV-006 dummy-hash path → asymmetric CPU-DoS; the
+    ≤72-byte check does NOT protect (Node counts a lone surrogate as 3 bytes). FIX at the single
+    Hash seam: `verify` rejects a lone-surrogate plaintext with an immediate `false` (a malformed
+    string can never equal a well-formed stored password); `hash` throws
+    `invalid_password_encoding` fast. **Follow-up REQUIRED (D-025):** User_Service (9.1) +
+    Authentication_Service (7.1) must ALSO reject malformed UTF-16 at the boundary
+    (defense-in-depth); the hasher guard is the backstop.
+  - `test/auth-management/password-hasher.test.js` — **7 passing**: **P-001** @150 iters (own-plaintext
+    verify + two-hashes-differ random-salt witness); **P-002** @150 iters over the ≤72-byte
+    **well-formed** domain (generator is rejection-free + code-point-safe — mode-1 drops the last
+    CODE POINT, never fabricating a lone surrogate); empty-string base; defensive verify;
+    malformed-UTF-16 fast-reject regression guard (<1000ms); FUXA cost-10 interop; unconfigured
+    seam = cost 12.
 
-Tests: `server/test/auth-management/serialization.test.js` (task 2.2 P-005 area). **Note:** most
-implemented code was verified only via inline "node sanity" checks while deps were absent; the real
-`mocha`/`fast-check` suites still need to run (see §4).
+Earlier "node sanity only" foundational code that now has REAL green tests:
+`serialization.test.js` (P-005, 5 passing), `brute-force.test.js` (P-012 @200 iters + edges,
+9 passing), `audit-logger.test.js` (11.3/11.4, 10 passing — closes the N-022 dedicated-file residual
+via a real winston File transport). `adapters/fuxa-jwt.adapter.js` (5.1) exists but its real crypto
+round-trip is still only shim-verified (run it under Task 5).
 
-### 3d. Anti-drift infrastructure — hardened this session (N-024)
-Five layers now: (1) auto-loaded steering, (2) `00-INDEX` integrity manifest + check, (3) `GATES`
-phase gates, (4) **NEW automatic save-time guard hook** `.kiro/hooks/auth-um-save-time-integrity-guard.kiro.hook`
-(fires a read-only Integrity Check whenever a `decisions/**`, `design/**`, `requirements.md`, or
-`tasks.md` file is saved — closes the N-020 silent-overwrite gap), (5) on-demand deep-audit hook
-`.kiro/hooks/auth-um-antidrift-audit.kiro.hook` (`userTriggered`).
-
-Two stale-annotation drifts were found and corrected this session (recorded in `00-INDEX §3` +
-N-024): `00-INDEX §2` still said D-014…D-023/DV-006…DV-008 were "OPEN" (→ CONFIRMED); `N-022`
-claimed deps absent (→ RESOLVED, deps now present).
+### 3c. Anti-drift infrastructure — unchanged (5 layers)
+(1) auto-loaded steering, (2) `00-INDEX` manifest + §4 check, (3) `GATES` phase gates, (4) save-time
+integrity guard hook, (5) on-demand deep-audit hook.
 
 ---
 
 ## 4. WHAT REMAINS (under G5) — the plan
 
-The full task list + dependency wave graph is in `.kiro/specs/auth-user-management/tasks.md`, and the
-Design→Task→Test map is `traceability.md` §D. Task status markers there: `[x]` done, `[~]`
-in-progress, `[ ]` not started, `*` = optional test sub-task.
+Full task list + wave graph in `tasks.md`; live status in `traceability.md` §D. Markers: `[x]` done,
+`[~]` in-progress, `[ ]` not started, `*` = optional test sub-task.
 
-**RECOMMENDED NEXT STEP (do this first) — establish a verified-green test baseline.**
-Reason: adapters/services in §3c are marked implemented but their real test suites have never
-executed (deps were absent → only "node sanity"). Deps are now installed. Building the store layer
-and everything above on an un-run foundation is "building on sand" — against the user's root-cause
-principle. Run/author the foundational tests first: 3.3/3.4/3.5 (Password_Hasher props P-001/P-002),
-6.2/6.3 (brute-force P-012 + edges), 11.3/11.4 (audit + dedicated-sink/health), 2.2 (serialization
-P-005, test file already exists). Convert those `traceability §D` rows to `tested`.
+**Done:** Task 1, **Task 2** (store; 2.9 last-admin half + 2.10 deferred to Task 9), **Task 3**
+(hasher), Task 6 (brute-force), Task 11.1/11.3/11.4 (audit), Task 15.1 (client session plumbing).
 
-**THEN, bottom-up implementation order (per tasks.md waves):**
-1. **Task 2 — Store layer:** finish 2.3 `FuxaUserStoreAdapter` + 2.4 `FuxaRoleStoreAdapter`; then
-   **2.8** (D-016 single-transaction atomic write, fixes N-010), **2.9** (D-020 atomic create +
-   last-admin `BEGIN IMMEDIATE`, fixes N-016); tests 2.5/2.6/2.7/**2.10** (P-016 concurrency).
-2. **Task 3 — Password_Hasher:** 3.2 service (D-017 bounded ≤72-byte domain policy site is §04).
-3. **Task 5 — Token_Service:** 5.2 issue/verify/refresh + expiry table; **5.6** (D-021 JWT
-   hardening + `tokenVersion` stamp), **5.7** (D-019 `Refresh_Token_Store` + reuse detection).
-4. **Task 7 — Authentication_Service:** 7.1 (incl. DV-006 uniform-401 + dummy-hash timing).
-5. **Task 8 — RBAC:** 8.1 Role_Service, 8.2 Authorization_Service + `isAdministrator` (D-015 live
-   authority); prop 8.6 (P-013).
-6. **Task 9 — User_Service:** 9.1 CRUD + AC-4.6/4.7 password policy + last-admin guard.
-7. **Task 11 — Audit:** 11.2 emission wiring into services.
-8. **Task 12 — Bootstrap:** 12.1 runBootstrap, **12.7** (D-022 secure enrollment channel), 12.2
-   rotatePassword/Account_Service, 12.3 migration remediation.
-9. **Task 13 — API layer:** 13.1 authz middleware (D-015), 13.2 auth router, 13.3 users router,
-   13.4 roles router, **13.5** composition root + **SUPERSEDE cutover** (D-014), **13.7** account
-   router `POST /api/account/rotate-password` (D-018); prop 13.8 (P-014).
-10. **Tasks 15–17 — Client:** 15.2 AuthSignInClient, 15.3 admin clients; 16.x routed Login_Page;
-    17.x User-Management page + SUPERSEDE cutover.
-- Checkpoints: tasks 4, 10, 14, 18 (review gates, no design mapping).
+**RECOMMENDED NEXT STEP — Task 5 (Token_Service, §02):**
+1. **5.2** `services/token.service.js` — `issueAccessToken({username,groups,roles})` encoding
+   `{id,groups,roles}` (D-007); `issueRefreshToken`; `verify(token)→VerifyResult` (authenticated iff
+   signature valid AND unexpired; expose id/groups/roles); `refresh(refreshToken)→RefreshOutcome`.
+   Implement the §4 expiry decision table (configured → default finite 1h → dev-only non-expiring,
+   guarded/loud; never a silent non-expiry).
+2. **5.6** JWT hardening (**D-021**): pin `algorithms` on verify, add+validate `iss/aud/sub/jti/typ`,
+   `kid` for rotation, stamp `tokenVersion` (so D-015 can revoke).
+3. **5.7** stateful `Refresh_Token_Store` (**D-019**, RFC 9700): hashed-at-rest,
+   `family/jti/parent_jti/state`, atomic consume-and-rotate, reuse detection revokes the family,
+   `tokenVersion` check.
+4. Tests **5.3\* (P-007)**, **5.4\* (P-008)**, 5.5\* (refresh/sign-out units), **5.8\* (P-015)**.
+   `adapters/fuxa-jwt.adapter.js` (5.1) already exists — verify its real crypto round-trip here.
+
+**THEN (bottom-up):** Task 7 (Authentication_Service — incl. DV-006 uniform-401 + dummy-hash timing,
+AND the D-025 malformed-UTF-16 boundary reject); Task 8 (RBAC — Role_Service + Authorization_Service,
+D-015 live authority, P-013); **Task 9** (User_Service CRUD — incl. AC-4.6/4.7 password policy, the
+D-025 boundary reject, the last-admin `BEGIN IMMEDIATE` guard + **P-016** deferred from Task 2, and
+**P-010**); Task 11.2 (audit emission wiring); Task 12 (bootstrap + D-022 secure enrollment +
+rotate + migration); Task 13 (API routers + authz middleware D-015 + **SUPERSEDE cutover D-014** +
+account router D-018 + P-014); Tasks 15–17 (client Login + User-Management pages + client cutover).
+Checkpoints: tasks 4, 10, 14, 18.
 
 **G5 Definition of Done per task:** code matches the corrected design section it cites; touches FUXA
 core only via the D-003 seams; tests green incl. ≥100-iter property tests + concurrency/security
 tests; flip the `traceability §D` row to `implemented`/`tested`; log any newly-found deviation
-(`N-*`/`DV-*`) BEFORE merging.
+(`N-*`/`D-*`/`DV-*`) BEFORE merging.
 
 ---
 
-## 5. ENVIRONMENT FACTS (verified)
+## 5. ENVIRONMENT FACTS (verified this session)
 
-- OS: **Windows**; shell: PowerShell / cmd. (Console multi-line output can truncate — prefer writing
-  results to a file and reading back, per N-001.)
-- Node/npm: recorded as **v25.2.1 / 11.6.2** (N-001, 2026-07-13) and **v24.15.0** on a later check
-  (N-023). FUXA's Dockerfile targets Node 18 — a version mismatch to keep in mind for native modules
-  (`sqlite3`, `serialport`).
-- **Server deps INSTALLED** under `server/node_modules` (verified 2026-07-13, N-024):
-  `winston`, `bcryptjs`, `jsonwebtoken`, `mocha@10.8.2`, `sinon@19.0.2`, `sqlite3`, and
-  **`fast-check@3.23.2`** (added as a devDependency for PBT — N-023). `chai@5` is ESM-only, so
-  module tests use Node's built-in **`node:assert`** (CommonJS) + `sinon` + `fast-check`, NOT chai.
-- Runtime data lives outside source (`_db`, `_logs` under FUXA_APPDATA) — survives upgrades; code
-  needs git to survive upgrades (N-003).
-- The `server/package.json` + `package-lock.json` were modified only to add the pinned `fast-check`
-  devDependency (within the D-003 build-config boundary).
+- OS: **Windows**; shell: PowerShell / cmd. Console multi-line output truncates and complex
+  `node -e` escaping breaks (N-001) — **write results to a file and read back**; for tricky probes
+  write a temp `.js` file and run `node file.js` (delete after).
+- Node: **v25.2.1** on this machine (FUXA's Dockerfile targets Node 18 — mismatch to watch for
+  native modules `sqlite3`/`serialport`, but everything runs).
+- **Server deps present** under `server/node_modules`: `winston`, `bcryptjs`, `jsonwebtoken`,
+  `mocha@10.8.2`, `sinon`, `sqlite3`, `fast-check@3.23.2`. `node_modules` is gitignored — always
+  `npm install` after a fresh checkout AND re-confirm `fast-check@3.23.2` (N-025).
+- Runtime data (`_db`, `_logs`) lives outside source under FUXA_APPDATA — survives upgrades; code
+  needs git to survive upgrades.
+- **Test-runner method (N-025) — RELIABLE, recreate each session:** `npx mocha` / `.bin/mocha.cmd`
+  triggers an interactive `mocha@11` install and locks output files. Instead, create a temp
+  `server/_run.js`:
+  ```js
+  'use strict';
+  const Mocha = require('mocha'); const path = require('path');
+  const files = process.argv.slice(2);
+  const mocha = new Mocha({ timeout: 40000, reporter: 'spec' });
+  for (const f of files) mocha.addFile(path.resolve(process.cwd(), f));
+  mocha.run((failures) => { process.on('exit', () => process.exit(failures ? 1 : 0)); });
+  ```
+  Run from `server/`:
+  `node _run.js test/auth-management/<file>.test.js *> ..\out.txt` then read `out.txt`. Use a FRESH
+  output filename each run. **Delete `server/_run.js` and the `*.txt` outputs at session end**
+  (they are temp, not committed).
 
 ---
 
 ## 6. KEY GOTCHAS / DO-NOT-REPEAT
 
-- **N-020 incident:** a ledger file was once overwritten with a chat transcript. Never overwrite a
-  ledger file wholesale. The new save-time guard hook now watches for this.
-- **Router shadowing (N-014):** FUXA registers `/api/signin`, `/api/refresh`, `/api/signout`,
-  `/api/users`, `/api/roles` before any module router. The module SUPERSEDES them (D-014) — you must
-  STOP mounting FUXA's overlapping routers and mount the module router, or it becomes dead code.
-- **Double-hash hazard (D-010/D-016):** FUXA's `setUser` re-hashes any truthy `pwd`. The adapter
-  writes the password hash verbatim via its own transaction and calls `setUsers` with password
-  omitted (cache refresh only) — never pass the hash to `setUser`.
-- **bcrypt 72-byte truncation (N-012):** P-002 is only true over the ≤72-byte domain; the User_Service
-  must reject >72-byte passwords (AC-4.6) before hashing.
-- **Live authority (N-011/D-015):** build `Identity` from the live `User_Record` each request, not
+- **Ledger append-only (N-020).** Never overwrite a ledger file wholesale.
+- **Router shadowing (N-014/D-014).** FUXA registers `/api/signin`, `/api/refresh`, `/api/signout`,
+  `/api/users`, `/api/roles` first; the module must SUPERSEDE (stop mounting FUXA's overlapping
+  routers) at the composition root (Task 13.5) or it becomes dead code.
+- **Double-hash hazard (D-010/D-016).** FUXA `setUser` re-hashes any truthy `pwd`. The store adapter
+  writes the hash verbatim on its OWN connection and only calls `setUsers` with password omitted
+  (cache refresh). Never pass a hash to `setUser`.
+- **bcrypt 72-byte truncation (N-012/D-017).** P-002 holds only over ≤72 UTF-8 bytes; User_Service
+  (9.1) rejects >72-byte passwords before hashing (AC-4.6).
+- **bcryptjs lone-surrogate DoS (N-027/D-025) — NEW.** Malformed UTF-16 (a lone surrogate) makes
+  bcryptjs burn ~9.6s then throw; reachable unauthenticated via login JSON + DV-006 dummy-hash.
+  Fixed at the Password_Hasher seam (verify→false fast, hash→throws); User_Service 9.1 +
+  Authentication_Service 7.1 MUST also reject malformed UTF-16 at the boundary.
+- **Live authority (N-011/D-015).** Build `Identity` from the live `User_Record` each request, not
   from token claims; check `tokenVersion` for active revocation.
+- **Store reads via own connection (D-024).** The adapters read through their own sqlite connection
+  (identical SELECT to FUXA); `runtime.users` is only the best-effort cache-coherence collaborator.
 
 ---
 
-## 7. GIT — how the code was pushed (for the new machine)
+## 7. GIT — how to sync (for the new machine)
 
-- Repo remote is named **`orgin`** (note: misspelled, not `origin`) →
-  `github.com/mgcoder9x/fuxa-scada.git`. The remote URL has an embedded access token in git config on
-  the old machine; the new machine will need its own credentials/token to push.
-- All this session's work was committed and pushed to a dedicated branch:
-  **`auth-user-management-spec`** (see the commit for the exact scope).
+- Remote name is **`origin`** (verified 2026-07-13 via `git remote -v`) →
+  `github.com/mgcoder9x/fuxa-scada.git`. Work branch: **`auth-user-management-spec`**. (A prior push
+  had a PAT embedded in the URL; it was removed from `.git/config` and the user was told to revoke
+  it — use your own credentials/token.)
 - On the new machine:
   ```
-  git fetch orgin
+  git fetch origin
   git checkout auth-user-management-spec
+  git pull origin auth-user-management-spec
   cd server && npm install
   ```
-- `node_modules` is gitignored — always `npm install` after a fresh checkout.
-- Untracked-then-added in this push: `.kiro/hooks/`, `.kiro/steering/`, `.kiro/specs/.../decisions/00-INDEX.md`,
-  `.../GATES.md`, `server/auth-management/`, `server/test/auth-management/`, `client/src/app/auth-management/`,
-  and this `end.md`.
+- `node_modules` is gitignored — always `npm install` after checkout; re-confirm `fast-check@3.23.2`.
+- This session added: `server/auth-management/store/fuxa-auth-db.js`,
+  `server/auth-management/adapters/fuxa-user-store.adapter.js`,
+  `server/auth-management/adapters/fuxa-role-store.adapter.js`,
+  `server/auth-management/services/password-hasher.js`,
+  `server/test/auth-management/store-adapters.test.js`,
+  `server/test/auth-management/password-hasher.test.js`, plus ledger updates (D-024/D-025,
+  N-025/N-026/N-027, traceability §D, 00-INDEX high-water, tasks.md 2.x/3.x) and this `end.md`.
 
 ---
 
-## 8. ONE-PARAGRAPH SUMMARY (if you read nothing else)
+## 8. ONE-PARAGRAPH SUMMARY
 
-FUXA auth module: design is fully corrected and defect-free (G0–G4 passed, all of N-010…N-021 +
-DV-006/007/008 resolved, decisions D-014…D-023 confirmed). Foundational code (models, serialization,
-bcrypt/JWT adapters, brute-force guard, audit logger, client session plumbing) is implemented and
-matches the corrected design, but its real test suites have not been run yet. You are under **G5**:
-first run/author the foundational tests to get a verified-green baseline, then continue bottom-up
-from **Task 2 (store layer)** per `tasks.md`. Obey the ledger in `.kiro/specs/auth-user-management/decisions/`
-— append-only, root-cause fixes, verify everything, one step at a time. Start with §0 above.
+FUXA auth module: design fully corrected (G0–G4 passed). Implementation under G5 is progressing
+bottom-up with REAL green property tests (42 passing): models + serialization + **store layer
+(Task 2)** + **Password_Hasher (Task 3)** + brute-force + audit + client session plumbing are done
+and tested. Two implementation-time decisions were logged (D-024 store own-connection reads; D-025
+malformed-UTF-16 guard) and one VERIFIED security defect found via PBT and fixed at root (N-027:
+bcryptjs ~9.6s lone-surrogate DoS). Next is **Task 5 (Token_Service)**, then Authentication → RBAC →
+User_Service (which also owns the deferred last-admin P-016 + the D-025 boundary reject) → audit
+wiring → bootstrap → API cutover → client UI. Obey the append-only ledger, fix root causes, verify
+everything, one step at a time. Start at §0.
