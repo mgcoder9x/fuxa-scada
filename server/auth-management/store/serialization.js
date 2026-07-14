@@ -26,6 +26,41 @@
  */
 
 /**
+ * Recursively remove any own `__proto__` key from a JSON-parsed value (D-026, fixes N-029).
+ *
+ * `JSON.parse('{"__proto__":...}')` creates an OWN, enumerable `__proto__` data property (parse
+ * itself is pollution-safe). The hazard is DOWNSTREAM: any consumer that rebuilds the object with
+ * `[[Set]]` semantics (`Object.assign`, `target[k]=v`, `for..in` copy) triggers `Object.prototype`'s
+ * `__proto__` accessor — silently DROPPING a primitive value (the N-029 round-trip loss) or, for an
+ * object value, REASSIGNING the target's prototype (a prototype-manipulation vector). `__proto__` is
+ * therefore not a legitimate stored metadata key; it is reserved and stripped here at the single
+ * translation seam so neither module adapter nor unmodified FUXA-written rows can inject it. Only
+ * `__proto__` is stripped — `constructor`/`prototype` are ordinary data keys under `[[Set]]` (no
+ * accessor) and may be legitimate metadata, so they are preserved (see D-026 / design/06 §3.2, §4.2).
+ *
+ * @param {any} value a value produced by `JSON.parse`
+ * @returns {any} the same value, mutated in place with own `__proto__` keys removed at every depth
+ */
+function stripProtoKeys(value) {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      stripProtoKeys(value[i]);
+    }
+    return value;
+  }
+  if (value !== null && typeof value === 'object') {
+    if (Object.prototype.hasOwnProperty.call(value, '__proto__')) {
+      delete value['__proto__'];
+    }
+    for (const k of Object.keys(value)) {
+      stripProtoKeys(value[k]);
+    }
+    return value;
+  }
+  return value;
+}
+
+/**
  * Raised by {@link serialize} when the write input cannot be encoded to JSON (e.g. a circular
  * reference or a BigInt). This is a programming error that should be guarded before persisting;
  * it is deliberately distinct from the resilient, non-throwing {@link deserialize} read path.
@@ -71,11 +106,13 @@ function deserialize(str) {
     return { ok: true, value: {} };
   }
   try {
-    return { ok: true, value: JSON.parse(str) };
+    // Strip own `__proto__` keys at parse time (D-026/N-029) so no downstream `[[Set]]`-based
+    // consumer can lose a value or have its target prototype reassigned by a stored key.
+    return { ok: true, value: stripProtoKeys(JSON.parse(str)) };
   } catch (e) {
     const detail = e && e.message ? e.message : String(e);
     return { ok: false, error: 'invalid_metadata', detail, raw: String(str) };
   }
 }
 
-module.exports = { serialize, deserialize, SerializationError };
+module.exports = { serialize, deserialize, stripProtoKeys, SerializationError };

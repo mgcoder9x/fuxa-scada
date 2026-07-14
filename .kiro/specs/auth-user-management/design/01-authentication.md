@@ -156,7 +156,7 @@ sequenceDiagram
             SVC-->>API: { kind:'rate_limited', retryAfterMs }
             API-->>C: 429 { error: 'too_many_attempts', message }
         else allowed
-            SVC->>US: findUser(username)
+            SVC->>US: get(username)   %% D-006 normalization: only username reaches the store (method canonicalized to get in §06)
             alt no matching record (AC-1.2)
                 US-->>SVC: none
                 SVC->>PH: verify(password, DUMMY_HASH)   %% DV-006: equalize timing vs the record-found path (result discarded)
@@ -165,7 +165,7 @@ sequenceDiagram
                 SVC-->>API: { kind:'unknown_user', error:'invalid_credentials' }
                 API-->>C: 401 { status:'error', error:'invalid_credentials' } (no token — identical to bad_password, AC-1.2/DV-006)
             else record found
-                US-->>SVC: record { username, fullname, passwordHash, roles }
+                US-->>SVC: record { username, fullname, passwordHash, roles, metadata, groups }
                 SVC->>PH: verify(password, passwordHash)   %% AC-1.5: never compares plaintext itself
                 alt hash mismatch (AC-1.3)
                     PH-->>SVC: false
@@ -175,7 +175,7 @@ sequenceDiagram
                     API-->>C: 401 (no token)
                 else hash match (AC-1.1)
                     PH-->>SVC: true
-                    SVC->>TS: issueAccessToken({ username, groups, roles })
+                    SVC->>TS: issueAccessToken({ username, groups, roles, tokenVersion })   %% D-027: tokenVersion from the live record (metadata.tokenVersion, default 0)
                     TS-->>SVC: token
                     SVC->>BF: reset(username)              %% AC-15.4
                     SVC->>AL: record(sign-in, username, outcome=success)
@@ -284,7 +284,7 @@ What this section **owns** vs. **delegates** (kept DRY — details live with the
 | Access_Token issuance & claims (AC-1.1 token) | No | [`02`](./02-token-and-session.md) (REQ-2) | `Token_Service.issueAccessToken(identity)` |
 | Brute-force throttling (429) | No | [`10`](./10-brute-force-protection.md) (REQ-15) | `checkAllowed / recordFailure / reset` |
 | Recording the sign-in attempt | No | [`09`](./09-audit-logging.md) (REQ-14) | `Audit_Logger.record(event)` |
-| User lookup + record/`roles` shape | No | [`06`](./06-persistence-and-serialization.md) / store adapter | `User_Store.findUser(username)` |
+| User lookup + record/`roles` shape | No | [`06`](./06-persistence-and-serialization.md) / store adapter | `User_Store.get(username)` (the normalized username-only lookup, D-006; canonicalized to `get` in §06) |
 | Refresh token & sign-out (204) | No | [`02`](./02-token-and-session.md) (REQ-3) | out of scope for the sign-in path |
 
 **Boundary rules honored (from the master map, AC-16.*):** the API layer delegates to the
@@ -305,8 +305,9 @@ API fails fast when the service is unavailable (AC-16.4, [§7](#7-error-handling
 - **Query-injection via extra body fields.** FUXA passes the *entire* request body to
   `runtime.users.findOne(req.body)` (verified), which forwards it to the store as a query
   filter. The module's service extracts **only** `username` and passes a normalized
-  `findUser(username)` to `User_Store`, so additional attacker-supplied body fields cannot
-  widen or alter the lookup.
+  `get(username)` to `User_Store` (the lookup method canonicalized to `get` in §06; D-006's
+  intent — only the username reaches the store — is preserved), so additional attacker-supplied
+  body fields cannot widen or alter the lookup.
 - **Empty / whitespace username or password.** Treated as a **missing field** (AC-1.4) after
   trimming `username`; an all-whitespace or empty password is rejected as `missing_field`
   rather than being sent to `Password_Hasher`.

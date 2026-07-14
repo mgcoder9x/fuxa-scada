@@ -16,9 +16,11 @@
  *   excluded : undefined, functions, NaN, ±Infinity, -0, Date  (JSON asymmetries).
  *   generator constraint (§3.2/§9): a metadata object carries no TOP-LEVEL `roles` key (reserved
  *              by the info<->{roles,metadata} mapping); nested `roles` keys are allowed.
- *   also excluded from keys: `__proto__` — JSON.parse creates it as an OWN property whereas
- *              object construction via assignment would set the prototype, an asymmetry that is a
- *              JS/JSON footgun, not a serialization defect. Excluding it keeps P-005 a true identity.
+ *   reserved/stripped key: `__proto__` — a prototype-pollution accessor, not legitimate metadata.
+ *              `deserialize` STRIPS it at every depth (D-026, fixes N-029) so no `[[Set]]`-based
+ *              consumer can lose a value or have its target prototype reassigned. It is therefore
+ *              excluded from the round-trip generators and pinned by dedicated strip tests below.
+ *              `constructor`/`prototype` are ordinary data keys (no accessor) and are NOT stripped.
  */
 
 const assert = require('node:assert');
@@ -97,6 +99,37 @@ describe('Feature: auth-user-management — serialization (design/06 §4)', () =
             assert.strictEqual(r.error, 'invalid_metadata');
             assert.strictEqual(typeof r.detail, 'string');
             assert.strictEqual(r.raw, bad);
+        });
+    });
+
+    describe('prototype-pollution hardening: __proto__ is stripped (D-026, fixes N-029)', () => {
+        it('drops a top-level own `__proto__` key with a primitive value (no round-trip loss ambiguity)', () => {
+            const r = deserialize('{"__proto__":"x","keep":1}');
+            assert.strictEqual(r.ok, true);
+            assert.strictEqual(Object.prototype.hasOwnProperty.call(r.value, '__proto__'), false);
+            assert.deepStrictEqual(r.value, { keep: 1 });
+        });
+
+        it('drops a nested own `__proto__` key at every depth', () => {
+            const r = deserialize('{"a":{"__proto__":{"x":1},"b":2},"c":[{"__proto__":"y","z":3}]}');
+            assert.strictEqual(r.ok, true);
+            assert.strictEqual(Object.prototype.hasOwnProperty.call(r.value.a, '__proto__'), false);
+            assert.deepStrictEqual(r.value.a, { b: 2 });
+            assert.deepStrictEqual(r.value.c[0], { z: 3 });
+        });
+
+        it('does NOT reassign the parsed object prototype from a `{"__proto__":{...}}` payload', () => {
+            const r = deserialize('{"__proto__":{"isAdmin":true}}');
+            assert.strictEqual(r.ok, true);
+            assert.strictEqual(Object.getPrototypeOf(r.value), Object.prototype, 'prototype must be untouched');
+            assert.strictEqual(r.value.isAdmin, undefined, 'no inherited pollution');
+        });
+
+        it('preserves `constructor`/`prototype` as ordinary data keys (they are NOT stripped)', () => {
+            const r = deserialize('{"constructor":"acme","prototype":7}');
+            assert.strictEqual(r.ok, true);
+            assert.strictEqual(r.value.constructor, 'acme');
+            assert.strictEqual(r.value.prototype, 7);
         });
     });
 });

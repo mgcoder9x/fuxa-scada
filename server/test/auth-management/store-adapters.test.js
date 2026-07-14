@@ -33,6 +33,10 @@ const jsonNumber = fc.oneof(
 );
 // Recursive JSON-safe value: strings (incl. full Unicode), finite numbers, booleans, null, arrays,
 // and nested plain objects — bounded depth. Excludes undefined/function/NaN/±Infinity/-0/Date.
+// `__proto__` is a RESERVED/stripped key at every depth (D-026/N-029, design/06 §3.2/§4.2): it is a
+// prototype-pollution accessor, not legitimate metadata, so the store strips it and the round-trip
+// domain excludes it. `constructor`/`prototype` are ordinary data keys (no accessor) and stay in.
+const safeKey = fc.fullUnicodeString().filter((k) => k !== '__proto__');
 const jsonSafeValue = fc.letrec((tie) => ({
     value: fc.oneof(
         { maxDepth: 3, withCrossShrink: true },
@@ -41,12 +45,13 @@ const jsonSafeValue = fc.letrec((tie) => ({
         fc.boolean(),
         fc.constant(null),
         fc.array(tie('value'), { maxLength: 4 }),
-        fc.dictionary(fc.fullUnicodeString(), tie('value'), { maxKeys: 4 })
+        fc.dictionary(safeKey, tie('value'), { maxKeys: 4 })
     ),
 })).value;
-// metadata: an object root with NO top-level `roles` key (the reserved-key invariant, §3.2).
+// metadata: an object root with NO top-level `roles` key (the reserved-key invariant, §3.2) and no
+// reserved `__proto__` key at any depth (D-026/N-029).
 const metadataArb = fc.dictionary(
-    fc.fullUnicodeString().filter((k) => k !== 'roles'),
+    fc.fullUnicodeString().filter((k) => k !== 'roles' && k !== '__proto__'),
     jsonSafeValue,
     { maxKeys: 5 }
 );
@@ -224,6 +229,25 @@ describe('Feature: auth-user-management — Store layer (design/06 · REQ-13, D-
         } finally {
             await userStore.delete('corrupt_u');
             await userStore.delete('healthy_u');
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // D-026 / N-029 — a maliciously stored `__proto__` in `info` is neutralized on read
+    // -------------------------------------------------------------------------
+    it('prototype-pollution hardening: a stored `info.__proto__` payload is stripped on read (metadata clean, prototype untouched)', async () => {
+        // Write a raw row whose info carries a `__proto__` object payload, bypassing the adapter's
+        // compose (simulating a hostile or FUXA-written row).
+        await db.run('INSERT INTO users (username, fullname, password, groups, info) VALUES (?, ?, ?, ?, ?)',
+            ['pp_user', 'PP', 'h', 0, '{"roles":["r1"],"__proto__":{"isAdmin":true},"keep":1}']);
+        try {
+            const back = await userStore.get('pp_user');
+            assert.deepEqual(new Set(back.roles), new Set(['r1']), 'roles intact');
+            assert.deepEqual(back.metadata, { keep: 1 }, '__proto__ stripped; only real metadata remains');
+            assert.strictEqual(Object.getPrototypeOf(back.metadata), Object.prototype, 'metadata prototype untouched');
+            assert.strictEqual(/** @type {any} */(back.metadata).isAdmin, undefined, 'no inherited pollution');
+        } finally {
+            await userStore.delete('pp_user');
         }
     });
 

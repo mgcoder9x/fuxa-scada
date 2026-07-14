@@ -114,7 +114,9 @@ assigned roles, and an optional metadata object."
 | `fullname` | `string` | **required** | display name; stored verbatim (no trim/normalization at the store, [§06 §6.4](./06-persistence-and-serialization.md)) |
 | `passwordHash` | `string` | **required** | an **already-hashed bcrypt string** — **never** plaintext (AC-4.2); written verbatim via the adapter's dedicated password write, bypassing FUXA `setUser`'s re-hash path ([§06 §5](./06-persistence-and-serialization.md)); **excluded from every read projection** (AC-6.2 — surfaces only where sign-in needs a compare, §01) |
 | `roles` | `string[]` | **required** (may be empty `[]`) | set of **role ids** referencing `Role.id`; surfaced from `info.roles`; treated as a **set** (order-/duplicate-insensitive, [§06 §6.3](./06-persistence-and-serialization.md)) |
-| `metadata` | `object` | optional (defaults `{}`) | the non-role remainder of `info`; must be **JSON-safe** and must **not** carry a top-level `roles` key ([§6](#6-reserved-key--hash-exclusion-invariants)) |
+| `metadata` | `object` | optional (defaults `{}`) | the non-role remainder of `info`; must be **JSON-safe**, must **not** carry a top-level `roles` key, and must **not** carry a `__proto__` key (**D-026**, stripped on read); may carry the reserved keys `mustRotate` and `tokenVersion` ([§6](#6-reserved-key--hash-exclusion-invariants)) |
+| `metadata.tokenVersion` | `number` | optional (defaults **`0`**) | **active-revocation counter (D-015/D-027).** A non-negative integer; **absent ⇒ treated as `0`**. Stamped into the `Access_Token`/`Refresh_Token` at issuance (§02 §3) and compared live per request (§05 §4.1, coercing both sides to `0` when absent so a legacy token is revoked once the account reaches ≥1). Bumped on password rotation (§12 §4) and other force-logout/disable events |
+| `metadata.mustRotate` | `boolean` | optional (defaults `false`) | bootstrap forced-rotation gate (REQ-17); lifecycle owned by [§12](./12-admin-bootstrap.md) |
 | `groups` | `number \| number[]` | optional | FUXA legacy compat code; preserved verbatim but **outside** the AC-13.1 round-trip assertion ([§06 §6.1](./06-persistence-and-serialization.md)); `-1`/`255` ⇒ admin ([§05 §5](./05-rbac-authorization.md)) |
 
 - **Serves:** REQ-5…REQ-8 (CRUD), REQ-1 (sign-in lookup), REQ-13 (round-trip, AC-13.1),
@@ -167,6 +169,9 @@ owned by [§02 §3](./02-token-and-session.md).
 | `id` | `string` | **required** | the subject **username** (FUXA-compatible; FUXA signs `{ id: username, … }`) |
 | `groups` | `number \| number[] \| string[]` | **required** | FUXA legacy compat claim; `-1`/`255` ⇒ admin; `'guest'`/absent ⇒ unauthenticated ([§05 §5](./05-rbac-authorization.md)) |
 | `roles` | `string[]` | **required** | RBAC role **ids** the session carries (D-007); role→permission resolution is **not** encoded (computed at authorization time, [§05 §2.3](./05-rbac-authorization.md)) |
+| `tokenVersion` | `number` | **required** (default `0`) | active-revocation counter (**D-015/D-027**); stamped from the live account and compared per request (§05 §4.1) |
+| `type` | `'access'` | **required** | token-type discriminator (**D-028**): access tokens carry `type:'access'`, refresh tokens `type:'refresh'`; `verify` rejects a mismatched type ([§02 §5](./02-token-and-session.md)). A single `type` claim is used (not a separate `typ`) to avoid colliding with the JWT header `typ` |
+| `iss` / `aud` / `sub` / `jti` / `kid` | per [§02 §3](./02-token-and-session.md) | optional/hardening | D-021 registered-claim + key-id hardening; `iss`/`aud` validated only when configured (**D-029**); `kid` is forward-compat for future key rotation (**TO-012**, single active key today) |
 | `iat` | `number` | **required** | issued-at (set automatically by `jsonwebtoken`) |
 | `exp` | `number` | optional | expiry instant; **present by default** (finite 1-hour default when unconfigured, AC-2.7/P-008); **absent only** in explicit dev-only non-expiring mode (AC-2.8) — expiry policy owned by [§02 §4](./02-token-and-session.md) |
 
@@ -186,6 +191,8 @@ credentials." Shape owned by [§02 §6.1](./02-token-and-session.md), matching F
 |-------|------|------|-------------------|
 | `id` | `string` | **required** | subject username |
 | `type` | `'refresh'` | **required** | literal discriminator; a refresh flow rejects a token whose `type !== 'refresh'` (AC-3.3, [§02 §6.2](./02-token-and-session.md)) |
+| `jti` / `family_id` | `string` | **required** | D-019 rotation/reuse-detection ids; the server-side `Refresh_Token_Store` keys on `jti` within a `family_id` ([§02 §6](./02-token-and-session.md)) |
+| `tokenVersion` | `number` | **required** (default `0`) | D-015/D-027 counter carried so a rotation checks it (§02 §6.2 step 5) |
 | `exp` | `number` | **required** | finite refresh TTL (FUXA default `'7d'`, verified) |
 
 - **Transport invariant:** delivered/held **only** in the `fuxa_refresh` **HttpOnly** cookie
@@ -270,6 +277,7 @@ catalogued here so their fields stay consistent with the primary entities they d
 | `roles` | `string[]` | **required** | RBAC role ids (token `roles` / `info.roles`) |
 | `groups` | `number \| number[] \| string[]` | **required** | FUXA compat input to `groupCodeAdmin` ([§05 §5](./05-rbac-authorization.md)) |
 | `mustRotate` | `boolean` | **required** | bootstrap gate flag (REQ-17); source/lifecycle owned by [§12](./12-admin-bootstrap.md) |
+| `tokenVersion` | `number` | **required** (default `0`) | active-revocation counter (**D-015/D-027**); at issuance sourced from the live `metadata.tokenVersion` (default `0`); the Token_Service `Identity` (§02 §2.1) carries it end-to-end |
 
 - **Derived from:** verified `Access_Token` claims (§3.4) plus the bootstrap flag.
 

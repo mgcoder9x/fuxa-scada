@@ -73,7 +73,10 @@ class FuxaUserStoreAdapter {
      */
     _composeInfo(metadata, roles) {
         const base = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
-        return serialize(Object.assign({}, base, { roles: Array.isArray(roles) ? roles : [] }));
+        // Spread (define-semantics) rather than Object.assign ([[Set]]) so a caller-supplied
+        // `__proto__` key cannot reassign the composed object's prototype (D-026/N-029); `roles`
+        // is re-attached last so it stays authoritative (§3.2).
+        return serialize({ ...base, roles: Array.isArray(roles) ? roles : [] });
     }
 
     /**
@@ -87,7 +90,9 @@ class FuxaUserStoreAdapter {
     _compose(row, infoValue) {
         const obj = infoValue && typeof infoValue === 'object' && !Array.isArray(infoValue) ? infoValue : {};
         const roles = Array.isArray(obj.roles) ? obj.roles : [];
-        const metadata = Object.assign({}, obj);
+        // Spread uses define-semantics (CreateDataProperty), NOT `[[Set]]`, so no key can invoke the
+        // `__proto__` accessor even if one slipped past deserialize's strip (D-026/N-029).
+        const metadata = { ...obj };
         delete metadata.roles;
         return {
             username: row.username,

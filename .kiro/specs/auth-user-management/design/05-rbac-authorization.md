@@ -331,7 +331,9 @@ protected request the middleware performs:
 2. load the LIVE record: rec = runtime.users.getUserCache(username)   // O(1) in-memory (verified)
    rec is undefined  → account deleted / does not exist → authenticated:false (→ 401)
    (rec.metadata.disabled === true) → account disabled → authenticated:false (→ 401)   [see scope note]
-3. tokenVersion check: if token.tokenVersion < rec.metadata.tokenVersion → token revoked → 401
+3. tokenVersion check (D-027, coerce absent→0): if Number(token.tokenVersion || 0) < Number(rec.metadata.tokenVersion || 0) → token revoked → 401
+   // Absent on BOTH sides ⇒ 0 < 0 = false (legacy token + never-bumped account: allowed).
+   // Legacy token (absent ⇒ 0) vs a bumped account (≥1) ⇒ 0 < 1 = true ⇒ REVOKED (closes DEF-T5).
 4. derive authority FROM rec (NOT the token):
      roles      = rec.info.roles
      groups     = rec.groups
@@ -354,7 +356,11 @@ protected request the middleware performs:
 - **`tokenVersion` enables active revocation** of a still-signature-valid token even when the account
   otherwise looks unchanged (force-logout, post-password-change, disable). It is stamped into the
   token at issuance (§02 §3) and compared against the record's current `tokenVersion` (§02 owns the
-  bump points; §12 §4 bumps it on rotation).
+  bump points; §12 §4 bumps it on rotation). **Absent-value semantics (D-027, fixes DEF-T5):** both
+  the token claim and `rec.metadata.tokenVersion` are coerced to `0` when absent, so a **legacy token
+  (no claim ⇒ 0) is revoked as soon as the account bumps to ≥1**; a never-bumped account (0) with a
+  legacy token (0) is not revoked (`0 < 0` is false), preserving backward compatibility until the
+  first bump. `metadata.tokenVersion` is defined in [§11 §3.1](./11-data-models.md) with default `0`.
 - A missing/invalid/expired token yields `authenticated:false` (guest — see
   [§8.2](#82-guest-and-unauthenticated-handling-ac-103)); step 1 short-circuits before any record load.
 
@@ -380,10 +386,20 @@ to exactly one branch, which is what [§9](#9-correctness-properties) quantifies
 1. **Unauthenticated → 401 (AC-10.3).** If `identity.authenticated` is false (guest, missing,
    invalid, or expired token — §02/§5), deny with **401** `unauthorized_error`. No permission
    resolution occurs.
-2. **Bootstrap gate → 403 unless password rotation (AC-17.2 / REQ-17).** If
-   `identity.mustRotate` is true and `operation.requiredPermission !== 'account.rotatePassword'`,
-   deny with **403**. The only operation a not-yet-rotated seeded admin may perform is its own
-   password rotation ([§6](#6-bootstrap-gate-interaction-req-17)).
+2. **Bootstrap gate (AC-17.2 / REQ-17).** If `identity.mustRotate` is true, this step decides the
+   outcome **entirely** — permission membership (step 3) is **not** consulted:
+   - `operation.requiredPermission === 'account.rotatePassword'` → **allow**. Self-rotation is a
+     **self-authorized** operation that requires **no RBAC grant**, so it is permitted even though
+     `account.rotatePassword ∉ ADMIN_PERMISSION_SET`. This is the **ALLOW half** of the gate that
+     **P-009** ([§12 §9](./12-admin-bootstrap.md)) mandates and that the seeded admin (`groups:-1`,
+     which resolves to `ADMIN_PERMISSION_SET` — no `account.rotatePassword`) could **not** satisfy
+     through membership (this closes the DEF-R2 gap where the deny-only wording produced a bootstrap
+     deadlock — see [`../decisions/04-notes.md`](../decisions/04-notes.md) N-036).
+   - any other `requiredPermission` → **deny 403**.
+
+   Because the gate both **permits** rotation and **denies** everything else, and is evaluated
+   **before** membership, a not-yet-rotated seeded admin cannot use its `ADMIN_PERMISSION_SET` for
+   anything but its own password rotation ([§6](#6-bootstrap-gate-interaction-req-17)).
 3. **Permission membership → allow/deny (AC-10.1, AC-10.2, AC-10.4).** Compute
    `effective(identity)` ([§2.3](#23-how-a-users-roles-resolve-to-an-effective-permission-set)).
    If `operation.requiredPermission ∈ effective(identity)`, **allow** (AC-10.1); an identity
@@ -506,10 +522,13 @@ rotation is denied every protected operation except the password-rotation operat
   source, seeding, and the rotation that clears it are the **bootstrap mechanics owned by**
   [`12-admin-bootstrap.md`](./12-admin-bootstrap.md) (REQ-17); this section only *consumes* the
   flag and enforces the gate.
-- When `mustRotate` is true, `isAllowed` denies (**403**) every operation whose
-  `requiredPermission` is not `account.rotatePassword`, **regardless** of the admin permissions
-  the identity would otherwise have. Because the gate is evaluated **before** permission
-  membership, a not-yet-rotated seeded admin cannot use its `ADMIN_PERMISSION_SET` to bypass it.
+- When `mustRotate` is true, `isAllowed` **allows** `account.rotatePassword` and denies (**403**)
+  **every** other operation, **regardless** of the admin permissions the identity would otherwise
+  have. The rotation allow is a **self-authorized exception that bypasses permission membership**
+  (the seeded admin does not hold `account.rotatePassword` as a grant — [§4.2](#42-decision) step 2,
+  DEF-R2/N-036); every non-rotation permission is denied. Because the gate is evaluated **before**
+  permission membership, a not-yet-rotated seeded admin cannot use its `ADMIN_PERMISSION_SET` to
+  bypass it, yet is never deadlocked out of the one operation that clears the gate.
 - After rotation, `mustRotate` is false and the account is authorized purely by permission
   membership ([§4.2](#42-decision) step 3), regaining its administrator permissions (AC-17.3).
 
@@ -614,8 +633,10 @@ API/token-layer concern (§02 §5 "Guest handling boundary"); this section owns 
 flowchart TD
     A["isAllowed(identity, operation)"] --> B{identity.authenticated?}
     B -- no --> R401["deny · 401 unauthorized_error<br/>(AC-10.3)"]
-    B -- yes --> C{mustRotate AND<br/>op ≠ account.rotatePassword?}
-    C -- yes --> R403g["deny · 403 forbidden<br/>(bootstrap gate · AC-17.2 · §12)"]
+    B -- yes --> C{mustRotate?}
+    C -- yes --> C2{op = account.rotatePassword?}
+    C2 -- yes --> ALLOWg["allow<br/>(bootstrap self-rotation · AC-17.2 · §12 P-009)<br/>membership NOT consulted"]
+    C2 -- no --> R403g["deny · 403 forbidden<br/>(bootstrap gate · AC-17.2 · §12)"]
     C -- no --> D["effective = ⋃ resolve(roles) ∪ groupCodeAdmin(groups)"]
     D --> E{requiredPermission ∈ effective?}
     E -- yes --> ALLOW["allow<br/>(AC-10.1; admin ⇒ AC-10.4)"]
@@ -630,8 +651,9 @@ flowchart TD
 > executions of a system — a formal statement about what the system should do. Properties are
 > the bridge between human-readable specifications and machine-verifiable correctness.*
 
-This section is the **single owner** of **P-006** (per the master-map Table of Contents and
-[`../decisions/traceability.md`](../decisions/traceability.md) §C). The prework consolidation
+This section is the owner of **P-006** and **P-013** (per the master-map Table of Contents and
+[`../decisions/traceability.md`](../decisions/traceability.md) §C; P-013 was added 2026-07-13 by
+D-015 and is formalized in [§9.1b](#property-13-owned-by-05--live-account-authority--active-revocation-d-015) below). The prework consolidation
 established that:
 
 - AC-10.5 is the one universally-quantified property this section owns (**P-006**, determinism).
@@ -658,6 +680,28 @@ bootstrap-gated seeded admin (403 except `account.rotatePassword`).
 
 **Validates: Requirements 10.5** — (P-006; decision semantics AC-10.1/10.2/10.3/10.4 are the
 branches quantified over)
+
+### Property 13 (owned by §05) — live account authority + active revocation (D-015)
+
+> **Formal home for P-013.** Added 2026-07-13 by **D-015** (fixes N-011) and registered in
+> [`../decisions/traceability.md`](../decisions/traceability.md) §C. The mechanism is specified in
+> [§4.1](#41-inputs); this subsection states the property the §4.1 mechanism must satisfy so the
+> owned-property lives in this section's body (not only in the ledger).
+
+*For any* verified token claims and *for any* live account record (or its absence), the identity
+used for the authorization decision is derived from the **live record**, not from the token's
+`roles`/`groups` claims; and a **signature-valid token is denied on the next protected request**
+(the resolved identity is `authenticated:false` ⇒ 401) when EITHER (a) the account no longer
+exists (or is disabled), OR (b) the token's `tokenVersion` is below the account's current
+`tokenVersion` (absent values coerced to `0`, **D-027**: a legacy token `0` is revoked once the
+account reaches `≥1`; both absent ⇒ `0<0` false ⇒ allowed). Conversely, when the account exists
+and the token's version is not below the account's, the identity carries the record's CURRENT
+`roles`/`groups`/`mustRotate` — so a role/group change takes effect on the next request. This is
+enforced by the pure resolver (`resolveIdentity(claims, record)`, D-032) that the middleware
+(§1.1, Task 13) feeds with `getUserCache(username)`.
+
+**Validates: D-015, N-011 (+ D-027 absent-value coercion)** — (P-013; owner §05; task 8.6). The
+role/group-change and deletion/version-revocation cases are the branches quantified over.
 
 ### 9.2 Property 10 (cross-cutting) — referenced, not owned here
 

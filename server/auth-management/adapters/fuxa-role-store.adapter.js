@@ -130,7 +130,9 @@ class FuxaRoleStoreAdapter {
                 if (!parsed.ok || !parsed.value || !Array.isArray(parsed.value.roles)) continue;
                 const filtered = parsed.value.roles.filter((rid) => !idSet.has(rid));
                 if (filtered.length !== parsed.value.roles.length) {
-                    const nextInfo = Object.assign({}, parsed.value, { roles: filtered });
+                    // Spread (define-semantics) not Object.assign ([[Set]]) — no `__proto__` accessor
+                    // hazard on the parsed row (D-026/N-029); `roles` re-attached authoritatively.
+                    const nextInfo = { ...parsed.value, roles: filtered };
                     await db.run('UPDATE users SET info = ? WHERE username = ?',
                         [serialize(nextInfo), user.username]);
                 }

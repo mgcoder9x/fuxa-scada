@@ -26,30 +26,6 @@
 - Impact / Risk: Couples the module to FUXA internals; mitigated by wrapping them behind the Service/Store interfaces (D-001) so they can be swapped later (AC-16.5).
 - Verification: design shows adapters over FUXA primitives; swapping the store must not change service interfaces.
 
-### D-004: Requirements-analysis auto-resolutions adopted as design constraints
-- Date: 2026-07-12
-- Phase: Requirements
-- Status: Active
-- Links: REQ-2 (AC-2.7), REQ-11 (AC-11), REQ-14 (AC-14.5), REQ-16 (AC-16.4)
-- Context: The requirements analysis pass proposed answers the user did not originally give; these were folded into the acceptance criteria.
-- Statement: Adopted — (a) tokens do not expire when no expiry is configured (AC-2.7); (b) the Login Page validates inputs client-side before submitting (AC-11); (c) each calling service sanitizes secrets out of audit events (AC-14.5); (d) the API fails fast when the service layer is unavailable (AC-16.4).
-- Rationale: Each makes an otherwise-underspecified behavior concrete and testable. (a) and (d) also carry risk — logged as trade-offs TO-002 / TO-004.
-- Alternatives considered: Leave unspecified — rejected: unspecified security behavior is a drift/ambiguity source.
-- Impact / Risk: (a) non-expiring tokens is a security concern → TO-002.
-- Verification: cross-check each cited AC remains present and unweakened through design and tests.
-
-### D-005: Default administrator bootstrap (needs design detail)
-- Date: 2026-07-12
-- Phase: Requirements
-- Status: OPEN (to be detailed in design; confirm with user)
-- Links: REQ-5, REQ-9, REQ-10 (AC-10.4)
-- Context: RBAC and user CRUD require an Administrator to exist, but "how the very first admin comes to exist" is unspecified. This is a classic bootstrap gap.
-- Statement: Proposed — seed a single default administrator on first run if the user store is empty, forcing a password change on first login.
-- Rationale: Without a bootstrap admin, no one can create users or roles (chicken-and-egg). Forcing a password change avoids shipping a known default credential.
-- Alternatives considered: CLI-created first admin; env-var seeded credentials. To be weighed in design (TO-005 placeholder).
-- Impact / Risk: A default credential window is a security risk if the forced-change step is skipped.
-- Verification: design must specify the exact bootstrap + forced-rotation flow; a test must prove the default credential cannot be used without rotation.
-
 ### D-003: Architecture scope = self-contained module inside FUXA, via thin adapters
 - Date: 2026-07-12
 - Phase: Requirements
@@ -58,7 +34,7 @@
 - Context: Fundamental fork — build the auth/user-management logic as a bounded module vs. edit FUXA's existing auth code in place vs. a fully separate project.
 - Statement: The module is a self-contained, layered subsystem living inside the FUXA workspace. It touches FUXA core only through thin adapters (over JWT helper, bcrypt, and the user/role store). It is NOT edited into FUXA's route handlers in place, and it is NOT a separate project.
 - Rationale (all factual):
-  1. The workspace is not a git repo and is intended to receive future FUXA upgrades (N-001). A bounded module touches few FUXA core files → far fewer merge conflicts on `git merge origin/master`.
+  1. On the historical 2026-07-12 old-machine snapshot, the workspace was not a git repo and was intended to receive future FUXA upgrades (N-001). The current transferred workspace is a git repository; the durable rationale remains that a bounded module touches few FUXA core files and therefore minimizes upgrade-merge conflicts.
   2. Logic behind service/store interfaces is directly PBT-testable; logic tangled into FUXA handlers is not (user requirement: "valid nhiều lần").
   3. Independent replaceability/scaling for a commercial system (AC-16.5).
   4. Smaller, self-contained security-audit surface.
@@ -66,16 +42,30 @@
 - Impact / Risk: Requires disciplined adapter boundaries; enforced by AC-16.2/16.3/16.5 and the traceability matrix.
 - Verification: design/00-architecture-overview.md must define the adapter seams; no design task may edit FUXA core logic outside an adapter.
 
-### D-005 (UPDATE): Administrator bootstrap decided — auto-seed + forced rotation
+### D-004: Requirements-analysis auto-resolutions adopted as design constraints
 - Date: 2026-07-12
 - Phase: Requirements
-- Status: Active (CONFIRMED by user 2026-07-12) — supersedes the OPEN state of the original D-005 above
-- Links: REQ-5, REQ-9, REQ-10, TO-005; will become a new requirement (see DV-004)
-- Statement: On first run, if the user store has no administrator, the system seeds exactly one default administrator and REQUIRES a password change before any other operation is permitted for that account.
-- Rationale: Resolves the chicken-and-egg bootstrap while guaranteeing no usable known-default credential persists past first login.
+- Status: Active (with clause (a) superseded by DV-003)
+- Links: REQ-2 (AC-2.7), REQ-11 (AC-11), REQ-14 (AC-14.5), REQ-16 (AC-16.4), DV-003
+- Context: The requirements analysis pass proposed answers the user did not originally give; these were folded into the acceptance criteria.
+- Statement: Historically adopted — (a) tokens would not expire when no expiry was configured; (b) the Login Page validates inputs client-side before submitting (AC-11); (c) each calling service sanitizes secrets out of audit events (AC-14.5); (d) the API fails fast when the service layer is unavailable (AC-16.4). **Clause (a) is no longer current:** DV-003 superseded it with a safe finite default TTL (1 hour), with true non-expiry restricted to explicit dev-only opt-in.
+- Rationale: Each made an otherwise-underspecified behavior concrete and testable. The security risk in historical clause (a) was resolved through TO-002/DV-003; clause (d)'s trade-off remains TO-004.
+- Alternatives considered: Leave unspecified — rejected: unspecified security behavior is a drift/ambiguity source.
+- Impact / Risk: The historical non-expiry risk is resolved by DV-003; current token-expiry behavior is governed by REQ-2 AC-2.7/2.8.
+- Verification: cross-check each cited AC remains present and unweakened through design and tests; verify no current artifact treats non-expiry as the default.
+
+### D-005: Administrator bootstrap — historical proposal confirmed as auto-seed + forced rotation
+- Date: 2026-07-12
+- Phase: Requirements
+- Status: Active (CONFIRMED by user 2026-07-12)
+- Links: REQ-5, REQ-9, REQ-10, TO-005, DV-004
+- Context: RBAC and user CRUD require an Administrator to exist, but "how the very first admin comes to exist" was unspecified. This was the bootstrap gap.
+- Historical proposal (originally OPEN): Seed a single default administrator on first run if the user store is empty, forcing a password change on first login; exact bootstrap and forced-rotation details required design/user confirmation.
+- Confirmation: On first run, if the user store has no administrator, the system seeds exactly one default administrator and REQUIRES a password change before any other operation is permitted for that account. This confirmation superseded only the proposal's OPEN status, not its provenance.
+- Rationale: Without a bootstrap admin, no one can create users or roles (chicken-and-egg). Forced rotation prevents a usable known-default credential from persisting past first login.
 - Alternatives considered: CLI `create-admin` (kept as documented ops fallback); env-var seeding (rejected as default: secret-in-env risk).
-- Impact / Risk: The forced-rotation gate is security-critical; must be provably un-bypassable (test required).
-- Verification: new requirement (DV-004) + a correctness test proving the seeded credential cannot perform any action before rotation.
+- Impact / Risk: The forced-rotation gate is security-critical and must be provably un-bypassable; a default-credential window exists if the gate is skipped.
+- Verification: DV-004/REQ-17 specify the flow; a correctness test must prove the seeded credential cannot perform any action before rotation.
 
 ### D-006: Normalize sign-in lookup input (harden against query-injection via body)
 - Date: 2026-07-12
@@ -88,6 +78,7 @@
 - Alternatives considered: Whitelist-sanitize the body but still pass an object (rejected: weaker, easy to regress). Leave as-is (rejected: known injection surface, unacceptable for commercial security).
 - Impact / Risk: The module's login path diverges from FUXA's inline handler behavior — intended and safer. Must ensure the store adapter's `findUser(username)` cannot be widened by callers.
 - Verification: §7 edge case "Query-injection via extra body fields"; a test sends extra body fields and asserts the store receives only the username.
+- REFINEMENT 2026-07-14 (N-035, DEF-A2): the normalized lookup method was named `findUser(username)` here, but the implemented `User_Store` interface + `FuxaUserStoreAdapter` and `design/06` canonicalized it as **`get(username)`**. The name is `get`; D-006's SUBSTANCE is unchanged — the Authentication_Service extracts only `username` and calls `get(username)`, so no attacker-supplied body field reaches the store as a filter. `design/01` was reconciled to `get`.
 
 ### D-007: Sign-in success payload returns `roles`; `groups` kept only inside the token
 - Date: 2026-07-12
@@ -101,28 +92,29 @@
 - Impact / Risk: Clients migrating from FUXA's payload must read `roles` not `groups`; documented for the UI sections (07/08) and the human guide.
 - Verification: §2.3 and §4; success-payload test asserts shape `{ token, username, fullname, roles }`.
 
-### D-009: Last-administrator / self-deletion protection — GAP, needs a requirement
+### D-008: bcrypt cost factor = 12 (configurable), with optional upgrade-on-verify rehash
 - Date: 2026-07-12
-- Phase: Design (section 04)
-- Status: RESOLVED 2026-07-12 — user approved; added as AC-8.5 (see DV-005) and made normative in section 04 §6.5. Candidate property P-010 raised (see traceability §C). Sub-question of non-last self-deletion remains an explicit open item in section 04 §8.3.
-- Links: REQ-8, REQ-17 (inverse of bootstrap guarantee)
-- Context: REQ-8 (Delete User) does not state whether an admin may delete their own account or the LAST remaining administrator. Deleting the last admin would leave the system with no administrator — the exact inverse of the REQ-17 bootstrap guarantee, and an operational lockout risk.
-- Statement (proposed): Add an acceptance criterion — "THE User_Service SHALL reject deletion of the last remaining administrator account" (and optionally reject self-deletion of the last admin).
-- Rationale: Prevents an irrecoverable no-admin state; complements REQ-17 which guarantees an admin exists at bootstrap.
-- Alternatives considered: Rely on bootstrap re-seeding when zero admins (rejected: bootstrap only seeds when store is empty; deleting the last admin while other users exist would NOT trigger re-seed, leaving a locked-out system). Do nothing (rejected: real lockout risk for a commercial product).
-- Impact / Risk: Until decided, section 04 does NOT special-case this. If adopted, it becomes a new/extended requirement and a test.
-- Verification: pending user decision; if adopted, add AC to REQ-8 (or a new requirement) + a test proving the last admin cannot be deleted.
+- Phase: Design (section 03)
+- Status: Active
+- Links: REQ-4, D-002, N-007
+- Context: VERIFIED — FUXA hard-codes bcrypt cost 10 (`bcrypt.hashSync(pwd, 10)`), not configurable.
+- Statement: The Password_Hasher uses a configurable cost (`settings.auth.bcryptCost`) defaulting to 12 (>= FUXA's 10). Because bcrypt embeds cost in the digest, legacy cost-10 hashes still verify; an optional upgrade-on-verify re-hashes to 12 on successful sign-in. Property tests run at cost 4 for speed.
+- Rationale: 12 is a contemporary recommended work factor (tens of ms/hash), strictly >= existing hashes so nothing is weakened; embedded-cost means no bulk migration needed.
+- Alternatives considered: Keep 10 (rejected: weaker than current best practice); force immediate bulk re-hash (rejected: cannot re-hash without plaintext — upgrade-on-verify is the only plaintext-free path).
+- Impact / Risk: Slightly higher sign-in CPU; negligible at 12. Test-cost 4 must never leak into production config.
+- Verification: §3.3; example test asserts unconfigured seam produces cost-12 digests and that a cost-10 digest still verifies.
 
-### TO-006: Duplicate-create HTTP status — 400 vs 409
+### D-009: Last-administrator protection adopted; non-last self-deletion intentionally allowed
 - Date: 2026-07-12
 - Phase: Design (section 04)
-- Status: DECIDED (400) — revisitable
-- Links: REQ-5 (AC-5.2)
-- Context: A duplicate username on create is semantically a conflict (HTTP 409), but the master-map error table defines 400 for client input errors and FUXA uses 400 for user-write failures (verified).
-- Decision: Map duplicate to 400 with stable identifier `duplicate_username` for master-map/FUXA alignment. The UI branches on the stable `error` id, not the status, so AC-5.2 is unaffected.
-- Alternatives considered: 409 Conflict (more REST-idiomatic) — deferred; can be adopted in review without changing the outcome contract.
-- Impact / Risk: Minor; cosmetic status choice.
-- Verification: §8.2 mapping; a create-duplicate test asserts the stable `duplicate_username` identifier regardless of status.
+- Status: Active (CONFIRMED by user 2026-07-12)
+- Links: REQ-8, REQ-17, AC-8.5, DV-005, D-013, P-010
+- Context: REQ-8 originally did not state whether an admin could delete their own account or the LAST remaining administrator. Deleting the last admin would create an operational lockout, the inverse of REQ-17's bootstrap guarantee.
+- Historical proposal: Add a criterion requiring `User_Service` to reject deletion of the last remaining administrator; optionally also reject self-deletion.
+- Resolution: AC-8.5/DV-005 adopted the last-administrator guard. D-013 then resolved the remaining sub-question: self-deletion by a **non-last** administrator is intentionally allowed because the ≥1-admin invariant remains intact and the action is recoverable.
+- Rationale: The guard prevents an irrecoverable no-admin state. Relying on bootstrap re-seeding was rejected because bootstrap seeds only when the store is empty; deleting the last admin while other users remain would not trigger it.
+- Impact / Risk: Last-admin deletion must fail without mutation. Non-last admin self-deletion remains allowed by design.
+- Verification: requirements.md contains AC-8.5; section 04 §6.5 specifies the guard; P-010/Task 12.5 and P-016/Task 2.10 cover the sequential and concurrent invariants when their owning deferred tasks are implemented.
 
 ### D-010: Double-hash resolution — adapter writes the password hash verbatim, bypassing setUser re-hash
 - Date: 2026-07-12
@@ -136,15 +128,6 @@
 - Impact / Risk: One adapter-owned single-column SQL statement; must stay parameterized and transactional.
 - Verification: §5; double-hash regression test asserts stored column verifies against the plaintext with a single bcrypt.compare; retain-on-omit test asserts the hash is byte-identical after a password-less update.
 - REFINEMENT 2026-07-13 (superseded-in-part by D-016): the original "two coordinated writes on two connections" mechanism is REPLACED. The adapter now writes ALL columns (incl. the verbatim password) in ONE transaction on its OWN sqlite connection (still bypassing `setUser`, so no double-hash), then calls `setUsers(password omitted)` **only** to refresh the `usersMap` cache. The no-double-hash and retain-on-omit guarantees of D-010 remain valid; only the write/atomicity mechanism changed (see D-016 and §06 §5.2).
-
-### N-009: FUXA getRoles has no per-record try/catch — one corrupt role fails the whole batch
-- Date: 2026-07-12
-- Phase: Design (section 06)
-- Status: Active (gap closed by module)
-- Links: REQ-13 (AC-13.4)
-- Statement: VERIFIED — `server/runtime/users/index.js` getRoles does `JSON.parse(drows[id].value)` with NO try/catch, so a single corrupt role `value` throws and rejects the entire getRoles batch. (By contrast, `removeRoles` and `_loadUsers` DO wrap per-record parse in try/catch — verified.)
-- Impact / Risk: In FUXA, one bad role row breaks all role listing. The module's Role_Store.readAll routes every row through the resilient `deserialize`, isolating the bad record (AC-13.4).
-- Verification: §4.3 + the roles-gap regression test in §9.2.
 
 ### D-011: UI login — SUPERSEDE FUXA's dialog with a module-owned routed Login_Page (reuse session wiring)
 - Date: 2026-07-12
@@ -183,12 +166,12 @@
 
 ---
 
-## Proposed root-cause resolutions for the 2026-07-13 deep-review defects (OPEN — approve step by step)
+## Historical deep-review proposals now enacted (2026-07-13)
 
-> These are the AI's recommended resolutions to the verified defects N-010…N-019/N-021. They are
-> **OPEN** (not yet enacted) so the user approves each direction before any design/requirements edit.
-> Each states a precise, factual reason and the rejected alternatives (trade-offs in TO-007…TO-011).
-> **No design file has been changed for these yet.** Priority order is given in `GATES.md` §Roadmap.
+> D-014…D-023 below preserve the original proposal wording, alternatives, and rationale as
+> historical provenance. Every entry was subsequently approved and enacted in the cited
+> design/requirements artifacts; each current Status is Active (CONFIRMED). There is no current
+> OPEN decision in this section. The original review order remains documented in `GATES.md` §Roadmap.
 
 ### D-014: Router cutover — module supersedes FUXA auth/users routers at the composition root (fixes N-014)
 - Date: 2026-07-13
@@ -323,3 +306,87 @@
 - Alternatives considered: (a) rely only on User_Service validation — REJECTED: it would leave the sign-in `verify` path (and the DV-006 dummy-hash for unknown users) exposed to the DoS, since those do not go through create/update validation. (b) sanitize/normalize the lone surrogate (e.g. replace with U+FFFD) then hash — REJECTED: it would let a malformed password silently "work", and two different malformed inputs could normalize to the same value (a P-002-style collision); rejecting is correct. (c) edit/patch bcryptjs — REJECTED: violates D-003 (no dependency edits) and would be lost on upgrade.
 - Impact / Risk: `verify` gains one O(n) scan of the plaintext (negligible vs a bcrypt compare). `hash` now has a defined throw path for malformed input (create/update validate first, so normal flows never hit it). No change to the P-001/P-002 guarantees over the well-formed domain. A user genuinely wanting a lone surrogate in a password (not representable as valid Unicode text, effectively impossible from a real keyboard) is refused — acceptable and correct.
 - Verification: `password-hasher.test.js` — `verify` returns `false` in <1000ms for three lone-surrogate variants (incl. the `JSON.parse('"\\uD83D"')` API form) where each was previously ~9.6s; `hash` throws `invalid_password_encoding`; P-001/P-002 still green @150 iters over the well-formed ≤72-byte domain.
+
+### D-026: Strip `__proto__` at the serialization seam + object-spread compose (fixes N-029)
+- Date: 2026-07-14
+- Phase: Implementation (Task 2 — §06)
+- Status: **Active (CONFIRMED)** — enacted in `server/auth-management/store/serialization.js` (new `stripProtoKeys`, applied in `deserialize`), `adapters/fuxa-user-store.adapter.js` (`_compose`/`_composeInfo` use object-spread), and `adapters/fuxa-role-store.adapter.js` (delete-fallback uses object-spread); design/06 §3.2/§4.1/§4.2/§9.1 synced; verified by the full auth-management suite (**47 passing, exit 0**, stable across 4 runs) incl. new deterministic strip tests.
+- Links: N-029 (the verified defect), REQ-13 (AC-13.1/AC-13.3), P-003, P-005, D-024, D-002, D-015, design/06 §3.2/§4
+- Context: N-029 verified that the store metadata round-trip lost a `__proto__` key (P-003 failed, seed-dependent) because the adapters rebuilt metadata from JSON-parsed data with `Object.assign` ([[Set]] semantics), which invokes `Object.prototype`'s `__proto__` accessor — dropping a primitive value or reassigning the object's prototype for an object value. The stored `info`/role `value` are JSON that must interoperate with unmodified FUXA code (D-003/AC-16.5), so a hostile/foreign row could carry `__proto__`.
+- Statement: (1) `deserialize` recursively removes any own `__proto__` key from the parsed value at every depth (`stripProtoKeys`), so no consumer of the single translation seam — either module adapter, or any module code reading `info`/`value` — can be affected. (2) The adapters compose/split with object-spread (`{ ...metadata, roles }` on write; `{ ...info }` minus `roles` on read; `{ ...parsed, roles: filtered }` in the role delete-fallback), which uses define-semantics (CreateDataProperty) and therefore cannot trigger the `__proto__` accessor even if one slipped through. (3) `__proto__` is declared a reserved/stripped metadata key at every depth (design/06 §3.2/§4.2) and excluded from the P-003/P-005 generators, alongside the pre-existing reserved `roles`. (4) ONLY `__proto__` is stripped — `constructor`/`prototype` have no `[[Set]]` accessor, round-trip correctly, and are plausibly legitimate data, so they are preserved.
+- Rationale (precise, root-cause): the true cause is `[[Set]]`-based reconstruction of untrusted JSON, not the property test. Stripping at the single serialization seam is the lowest, most complete choke point (protects every reader in one place — the file's own docstring names it "the single home of the string↔object translation"), and switching to define-semantics removes the hazard structurally. This is standard prototype-pollution hardening (OWASP) and makes P-003/P-005 true identities over a well-defined domain (the same technique already used for the reserved `roles` key). Preserving `constructor`/`prototype` avoids silent data loss for keys that are safe and possibly meaningful.
+- Alternatives considered: (a) only exclude `__proto__` from the test generator (leaf-only) — REJECTED: hides the real latent hazard for externally-written rows; violates "fix tận gốc". (b) also strip `constructor`/`prototype` — REJECTED: they round-trip correctly (no accessor) and could be legitimate metadata; stripping them would be unnecessary data loss. (c) pin a fixed fast-check seed to make the suite green — REJECTED: masks the defect rather than fixing it. (d) use `Object.create(null)` metadata objects — REJECTED: breaks deep-equality/JSON assumptions downstream and FUXA interop.
+- Impact / Risk: `deserialize` gains one O(n) recursive walk of the parsed object (negligible; parse already walks it). A stored `__proto__` key is intentionally not surfaced — the desired security behavior. Write-side `_composeInfo` also no longer surfaces a caller `__proto__` (defense-in-depth; the User_Service validation remains the primary policy site).
+- Verification: `serialization.test.js` — top-level + nested `__proto__` stripped, `{"__proto__":{...}}` does not reassign the prototype, `constructor`/`prototype` preserved; `store-adapters.test.js` — a raw `info` row with a `__proto__` object payload reads back with clean metadata and untouched prototype; P-003/P-004/P-005 green @150–200 iters with `__proto__` excluded from the domain. Full suite 47 passing, exit 0, stable across 4 runs.
+
+### D-027: `tokenVersion` is a first-class end-to-end contract field (fixes DEF-T1 + DEF-T5)
+- Date: 2026-07-14
+- Phase: Design validation (§02/§05/§11) — pre-implementation of Task 5
+- Status: **Active (CONFIRMED)** — enacted in `design/02` §2.1 (Identity gains `tokenVersion`), `design/11` §3.1 (`metadata.tokenVersion` field, default 0), §3.4 (Access_Token claim), §3.5 (Refresh_Token claim), §4.3 (Identity DTO), and `design/05` §4.1 (absent→0 coercion in the version check). No code yet; unblocks Task 5.2/5.6 and §05/§11 implementation.
+- Links: DEF-T1, DEF-T5, N-030, D-015 (the owning revocation decision), N-011, REQ-2, REQ-10, `server/auth-management/services/interfaces.js`
+- Context (VERIFIED, two distinct gaps found during the design-validation pass): (T1) `design/02` §2.1 defined `Identity = { username, groups, roles }` with **no `tokenVersion`**, yet §3 and the AC-2.1 note require `issueAccessToken` to encode `identity.tokenVersion`, and `interfaces.js` already declares `tokenVersion?: number` on both `identity` and `VerifyResult` — the design text lagged the code stub and its own §3. (T5) `design/05` §4.1 compares `token.tokenVersion < rec.metadata.tokenVersion`, but `design/11` (the field catalogue) defined **no** `tokenVersion` field and specified **no default**; in JS `undefined < 1` is `false`, so a legacy token (no `tokenVersion`) would **NOT** be revoked after an account bumps to ≥1 — a revocation bypass.
+- Statement: `tokenVersion` (non-negative integer) is defined end-to-end: (1) stored as `metadata.tokenVersion` on the account, **default 0 when absent** (§11 §3.1); (2) carried on the Token_Service `Identity` (§02 §2.1), sourced from the live account by the caller building the identity (Authentication_Service at sign-in; refresh path at rotation) per D-015; (3) stamped into the Access_Token and Refresh_Token (§11 §3.4/§3.5); (4) compared per request as `Number(token.tokenVersion || 0) < Number(rec.metadata.tokenVersion || 0)` (§05 §4.1) — **both sides coerced to 0 when absent**. Bump points are owned by §12 §4 (rotation) and future force-logout/disable.
+- Rationale (precise, root-cause): D-015's active revocation is only real if the counter exists and is comparable at every hop; a contract that omits it degrades silently to expiry-only (re-opening N-011), and an unsafe comparison lets a pre-bump legacy token survive a bump (a security hole). Coercing absent→0 makes the intended semantics explicit and backward-compatible: never-bumped account + legacy token ⇒ `0<0` false (allowed); bumped account + legacy token ⇒ `0<N` true (revoked). This is a root fix at the contract/data-model, not a leaf patch at one call site.
+- Alternatives considered: (a) leave `tokenVersion` optional/undefined and rely on truthiness at the call site — REJECTED: the bug is precisely undefined-handling; making it a defined field with a default removes the ambiguity everywhere. (b) store `tokenVersion` as a dedicated SQL column — REJECTED: `metadata`/`info` already carries account extras (mustRotate) and needs no schema migration (D-003 low-conflict); a column adds FUXA-core coupling with no benefit.
+- Impact / Risk: `metadata` now has two reserved keys (`mustRotate`, `tokenVersion`); the serialization `__proto__`/`roles` reserved-key rules (D-026) are unaffected. Existing FUXA accounts (no `tokenVersion`) read as 0 and are unaffected until a bump.
+- Verification (pending Task 5/8): P-013 (§05, live authority) must include a case where a legacy token (no `tokenVersion`) is denied after the account bumps to ≥1, and a never-bumped account allows a legacy token; P-007 (§02) asserts `issueAccessToken` stamps and `verify` exposes `tokenVersion`.
+
+### D-028: Single `type` token-type claim; drop the parallel payload `typ` (fixes DEF-T3)
+- Date: 2026-07-14
+- Phase: Design validation (§02/§11) — pre-implementation of Task 5
+- Status: **Active (CONFIRMED)** — enacted in `design/02` §3 (claims table row `type`), §5 (verify checks `decoded.type !== 'access'`), the §3 D-021 note and §7 posture (`typ`→`type`); `design/11` §3.4 documents `type:'access'`. No code yet.
+- Links: DEF-T3, N-030, D-021, REQ-2, `server/api/auth/index.js` (verified FUXA `buildRefreshToken`)
+- Context (VERIFIED): FUXA's refresh token already carries claim **`type: 'refresh'`** (`buildRefreshToken`, verified). The design had layered a NEW, separate payload claim **`typ`** (`'access'|'refresh'`) that §5's access-verify checked (`decoded.typ`), while §6.2's refresh path checked FUXA's `decoded.type`; §6.1's refresh shape listed `type` but not `typ`, contradicting §3's table. Two parallel type claims checked on different paths is fragile, and `typ` also collides with the conventional JWT **header** parameter `typ`.
+- Statement: Use a single authoritative payload claim `type` on both tokens — access tokens carry `type:'access'`, refresh tokens `type:'refresh'` (unchanged from FUXA). `verify` rejects a mismatched `type` (`wrong_type`) on each path. The separate `typ` payload claim is removed from the design.
+- Rationale (precise, root-cause): one discriminator, backward-compatible with FUXA, eliminates the cross-path mismatch class of bug and the header-name collision. Fixing the claim scheme (not just the one verify line) is the root fix.
+- Alternatives considered: (a) keep both `type` and `typ` and check each on its own path — REJECTED: fragile, duplicative, and `typ`-as-payload collides with the JWT header `typ`. (b) rename FUXA's `type` to `typ` everywhere — REJECTED: breaks FUXA backward compatibility (existing refresh tokens use `type`).
+- Impact / Risk: none negative — access tokens simply gain `type:'access'`; refresh tokens are unchanged. Existing FUXA refresh tokens keep verifying.
+- Verification (pending Task 5): a wrong-type token (refresh presented to the access-verify path and vice-versa) is rejected as `wrong_type`; the access token carries `type:'access'`.
+
+### D-029: Name the `iss`/`aud` settings and validate them only when configured (fixes DEF-T4)
+- Date: 2026-07-14
+- Phase: Design validation (§02) — pre-implementation of Task 5
+- Status: **Active (CONFIRMED)** — enacted in `design/02` §3 (D-021 note names `settings.auth.jwtIssuer` / `settings.auth.jwtAudience` + unset behavior) and §5/§7. No code yet.
+- Links: DEF-T4, N-030, D-021, REQ-2
+- Context (VERIFIED): §3/§5 validate `iss`/`aud` from "configured issuer/audience" but named no settings key (unlike `settings.auth.devNonExpiringTokens`, which §4.1 names). An implementer would invent key names (drift) and could validate against `undefined`, making an unconfigured deployment self-reject.
+- Statement: The issuer/audience are configured via `settings.auth.jwtIssuer` and `settings.auth.jwtAudience`. When a value is **unset**, that claim is **neither issued nor validated** (skip), so an unconfigured deployment does not self-reject; when set, the claim is both issued and validated on verify.
+- Rationale (precise): naming the keys removes an under-specification that would drift across implementers; "validate only when configured" is the safe default that preserves the FUXA-compat path (FUXA tokens carry no `iss`/`aud`) while allowing hardening when an operator opts in.
+- Alternatives considered: (a) always validate `iss`/`aud` with hard-coded defaults — REJECTED: breaks FUXA-compat tokens and forces configuration on every deployment. (b) leave unnamed — REJECTED: the DEF-T4 drift risk.
+- Impact / Risk: minimal; adds two optional settings. Default (unset) behavior equals today's FUXA behavior (no iss/aud).
+- Verification (pending Task 5): with keys set, a token minted for a different `aud`/`iss` fails verify; with keys unset, tokens verify without `iss`/`aud`.
+
+### D-030: Refresh_Token_Store — SHA-256 at-rest hashing + compare-and-swap single-use consume (implements D-019)
+- Date: 2026-07-14
+- Phase: Implementation (Task 5.7 — §02 §6)
+- Status: **Active (CONFIRMED)** — enacted in `server/auth-management/store/refresh-token-store.js` and consumed by `TokenService.refresh`; verified by `refresh-token-store.test.js` (14 passing incl. P-015 model-based @120 iters, real crypto + real sqlite). Full suite 71 passing, stable.
+- Links: D-019 (the owning decision), N-015, N-016 (TOCTOU class avoided), REQ-3 (AC-3.2/AC-3.3), P-015, RFC 9700, `store/fuxa-auth-db.js`
+- Context: `design/02` §6.1 mandates refresh tokens "hashed at rest" and §6.2 an "atomic consume-and-rotate", but names neither the hash algorithm nor the atomicity mechanism — both are AI implementation decisions the spec left open.
+- Statement: (1) **At-rest hashing = SHA-256 (hex) + `crypto.timingSafeEqual`**, NOT bcrypt. (2) **Single-use consume = conditional compare-and-swap** — `UPDATE auth_refresh_tokens SET state='used' WHERE jti=? AND state='active'`, requiring `changes===1`, inside a `BEGIN IMMEDIATE` transaction; if `changes===0` the token was not active (already used/revoked, or a concurrent refresh won) and the caller triggers reuse handling (revoke the family). The store is a NEW `auth_refresh_tokens` table on the module-owned connection (D-016), edits no FUXA core (D-003).
+- Rationale (precise, root-cause): (1) refresh tokens are HIGH-ENTROPY random JWTs, not low-entropy human passwords; bcrypt's deliberately-slow salted KDF exists to resist brute-force of guessable secrets and would add ~tens of ms/refresh with NO security gain for a 128-bit-random token. A preimage/collision-resistant fast hash is the standard (OWASP) at-rest choice for high-entropy session/refresh tokens; storing only the hash means a DB read cannot replay a token; `timingSafeEqual` removes a timing oracle on the digest. (2) A CAS `UPDATE … WHERE state='active'` makes "consume exactly once" an atomic database operation — the loser of a concurrent double-refresh observes `changes===0` and is routed to reuse detection — which is exactly P-015's invariant (≤1 active per family, single-use). Read-then-write would be the TOCTOU class of N-016.
+- Alternatives considered: (a) bcrypt-hash refresh tokens at rest — REJECTED: needless cost for a high-entropy secret; no brute-force threat model for a random token. (b) plaintext refresh tokens in the DB — REJECTED: a DB read would allow replay (the exact thing D-019 hardens). (c) read-then-write consume (SELECT state then UPDATE) — REJECTED: TOCTOU under concurrent refresh; two racers could both rotate. (d) an application-level mutex only — REJECTED: does not serialize across connections/processes; the CAS is the durable guarantee.
+- Impact / Risk: SHA-256 is fast (negligible per refresh). The CAS depends on transactions actually serializing on the connection — which surfaced and is fixed by N-032 (the FuxaAuthDb in-process transaction queue). The `auth_refresh_tokens` table grows until `pruneExpired` runs (housekeeping; correctness independent of it since expired JWTs are rejected at verify).
+- Verification: `refresh-token-store.test.js` — SHA-256-hex + constant-time match; CAS single-use under a concurrent double-consume (exactly one wins); revokeFamily; full `TokenService.refresh` outcomes (rotated / reuse_detected+family-revoke / missing / wrong_type / expired / invalid / unknown-jti / hash-mismatch+family-revoke / unknown_user / version-revoked); P-015 model-based @120 iters (≤1 active per family; reuse revokes family; no rotate after poison).
+
+### D-031: DV-006 dummy-hash is produced by the same Password_Hasher at the same cost, once, from a random secret
+- Date: 2026-07-14
+- Phase: Implementation (Task 7 — §01)
+- Status: **Active (CONFIRMED)** — enacted in `server/auth-management/services/authentication.service.js` (`_getDummyHash`); verified by `authentication.service.test.js` (unknown-user path calls `verify` against the dummy hash).
+- Links: DV-006, TO-010, REQ-1 (AC-1.2), N-035, `services/authentication.service.js`, `services/password-hasher.js`
+- Context: DV-006 removes the username-enumeration oracle by making an unknown-user sign-in return a response IDENTICAL to a bad password AND by adding a "dummy-hash verify" so the response LATENCY does not reveal whether the account exists. The design (§01 §7, DV-006) mandates "a comparable-cost `Password_Hasher.verify` against a fixed dummy hash" but does NOT specify how the dummy hash is produced — an implementation decision.
+- Statement: The dummy hash is generated by the SAME injected `Password_Hasher.hash(...)` from a per-process random secret (`crypto.randomBytes`), computed once and cached. Because it is a real bcrypt digest at the module's configured cost, the unknown-user `verify(password, dummyHash)` performs the same cost-N bcrypt comparison as the record-found `verify(password, storedHash)`, giving true timing parity. The verify result is discarded.
+- Rationale (precise): timing parity requires the dummy compare to cost the SAME as a real compare; only a hash at the same bcrypt cost achieves that. Producing it via the injected `Password_Hasher` guarantees it tracks whatever cost/scheme the hasher uses (today bcrypt cost 12; a future Argon2id migration per TO-007 would carry over automatically). A per-process random secret (vs a fixed literal) avoids shipping a known dummy digest; correctness does not depend on it since the result is discarded. The D-025 lone-surrogate guard fires identically on both paths (fast-reject before bcrypt), so parity holds for malformed input too.
+- Alternatives considered: (a) a hard-coded constant dummy hash string — REJECTED: brittle (its embedded cost could drift from the configured cost, breaking parity) and a known value. (b) skip the dummy verify and only equalize the response body — REJECTED: leaves the timing side-channel open (DV-006 explicitly closes timing). (c) compare against a random string (not a hash) — REJECTED: `verify` would fast-reject a non-bcrypt string, giving NO timing parity.
+- Impact / Risk: one extra bcrypt compare on the unknown-user path (intended — that is the parity cost) and one hash generation once per process. Negligible; it is exactly the cost the design intends to equalize.
+- Verification: `authentication.service.test.js` — the unknown-user test asserts `verify` is invoked against the dummy hash; the enumeration-safety test asserts unknown-user and bad-password expose an identical client-facing result.
+
+### D-032: The live-identity resolution is a pure `Authorization_Service.resolveIdentity(claims, record)` (the middleware supplies the record)
+- Date: 2026-07-14
+- Phase: Implementation (Task 8 — §05)
+- Status: **Active (CONFIRMED)** — enacted in `server/auth-management/services/authorization.service.js` (`resolveIdentity`); verified by `authorization.service.test.js` (P-013 exercises it directly with injected records).
+- Links: D-015, D-027, N-011, REQ-10, P-013, `design/05` §4.1/§9.1b, N-036, `design/05` §1.1 (middleware seam, Task 13)
+- Context: `design/05` §4.1 describes the live-identity resolution (verify token → load live record via `getUserCache` → reject missing/disabled → `tokenVersion` check → derive roles/groups/mustRotate from the record) as steps "the middleware performs." Tasks 8.6 (P-013) and 13.1 both reference this resolution, creating ambiguity about WHERE the logic lives and how P-013 (a Task-8 property) can be tested without a running HTTP middleware.
+- Statement: The PURE resolution logic is implemented as `Authorization_Service.resolveIdentity(tokenClaims, record)` — a synchronous, side-effect-free function of the verified claims and the live account record: returns `{ authenticated:false }` when `record` is absent or `metadata.disabled`, or when `Number(claims.tokenVersion||0) < Number(record.metadata.tokenVersion||0)` (D-027 coercion); otherwise `{ authenticated:true, username, roles: record.roles, groups: record.groups, mustRotate: !!record.metadata.mustRotate }`. The API-layer middleware (Task 13) performs ONLY the FUXA-specific parts — `Token_Service.verify` and `runtime.users.getUserCache(username)` — then calls `resolveIdentity(claims, record)` and `isAllowed(identity, operation)`.
+- Rationale (precise): §4.1's steps are pure given the record; extracting them into a service function makes P-013 unit/property-testable at the service layer (exactly where task 8.6 places it) without spinning up Express, and keeps the middleware (Task 13) a thin adapter over `getUserCache`. This honors the §4.3 purity claim (isAllowed is a pure function of the identity) and the D-003 boundary (the FUXA `usersMap`/`getUserCache` touch stays in the middleware/adapter, not in the pure service).
+- Alternatives considered: (a) put the resolution only in the middleware (Task 13) — REJECTED: P-013 (task 8.6) would be untestable until Task 13 and would require HTTP plumbing to test a pure rule; drift from tasks. (b) resolve inside `isAllowed` — REJECTED: conflates identity-building with the decision, and `isAllowed` must stay a pure function of an already-built identity (§4.3/P-006). 
+- Impact / Risk: `resolveIdentity` is pure and store-free (the caller supplies the record), so it adds no coupling; the middleware still owns the single `getUserCache` lookup. `isAllowed`/`isAdministrator`/`effective` resolve role→permission via the injected `Role_Store` (async) and are unchanged by this decision.
+- Verification: `authorization.service.test.js` — P-013 calls `resolveIdentity` with (a) a deleted account (undefined record) ⇒ authenticated:false ⇒ isAllowed 401; (b) a legacy token (tokenVersion absent ⇒ 0) vs an account bumped to ≥1 ⇒ authenticated:false; (c) a never-bumped account + legacy token ⇒ authenticated:true; (d) a live role change reflected in the resolved identity.

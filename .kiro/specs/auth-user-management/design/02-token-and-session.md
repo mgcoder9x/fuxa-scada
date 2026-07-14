@@ -88,9 +88,10 @@ configuration verified in `jwt-helper.js`.
 
 ```
 Identity = {
-  username: string,      // becomes the token 'id' claim (FUXA-compatible)
-  groups:   number | number[] | string[],   // FUXA group code(s), carried for compat (D-007)
-  roles:    string[]     // RBAC role identifiers (from info.roles), encoded per D-007
+  username:     string,      // becomes the token 'id' claim (FUXA-compatible)
+  groups:       number | number[] | string[],   // FUXA group code(s), carried for compat (D-007)
+  roles:        string[],    // RBAC role identifiers (from info.roles), encoded per D-007
+  tokenVersion: number       // active-revocation counter (D-015/D-027); from the LIVE account, default 0
 }
 ```
 
@@ -101,6 +102,12 @@ Identity = {
   migration.
 - `roles` is the RBAC claim added by this module (see [§3](#3-access_token-claims-structure)),
   per **D-007** (groups kept in token for compat; roles carried for the RBAC model).
+- `tokenVersion` is the D-015 active-revocation counter (**D-027**, fixes DEF-T1/N-030). It is
+  **read from the live account record** (`metadata.tokenVersion`, default `0` when absent — §11 §3.1)
+  by the caller building the `Identity` (the `Authentication_Service` at sign-in, §01; the refresh
+  path at rotation, §6). `issueAccessToken` MUST stamp it into the token so §05 §4.1 can compare it
+  against the account's current version. This field is REQUIRED in the contract (was previously
+  omitted here while §3 already required encoding it — the DEF-T1 inconsistency).
 
 ### 2.2 Operations
 
@@ -173,7 +180,7 @@ RBAC information REQ-2 requires.
 | `aud` | configured audience | **Audience** — validated on verify (D-021) | new; rejects tokens minted for another audience |
 | `sub` | `identity.username` | Subject (RFC 7519 standard) | new; mirrors `id` for standards-compliant consumers |
 | `jti` | random per token | **Token id** — audit correlation + point revocation | new (D-021); pairs with `tokenVersion` (D-015) |
-| `typ` | `'access'` \| `'refresh'` | Explicit **token type** — validated on verify | new; hardens the access-vs-refresh distinction (§6 already checks refresh `type`) |
+| `type` | `'access'` \| `'refresh'` | Explicit **token type** — validated on verify (**D-028**) | FUXA already signs `type:'refresh'` on the refresh token (verified); access tokens add `type:'access'`. A **single `type` claim** is authoritative on both paths — the separate `typ` payload claim was dropped (it duplicated `type` and collides with the JWT header parameter `typ`) |
 
 **AC-2.1 (encodes username and roles).** `issueAccessToken` MUST populate `id` from `username`
 and `roles` from `identity.roles`, and now also `tokenVersion`. The `roles` list is still encoded
@@ -203,13 +210,19 @@ holds its own secret; it delegates to the seam, so there is exactly one signing 
 > **JWT hardening (D-021, added 2026-07-13 — fixes N-017, RFC 8725).** (1) **Algorithm pinning:**
 > every `seam.verify(...)` MUST pass an explicit `{ algorithms: ['HS256'] }` (or the single
 > configured algorithm) so a token with a different/`none` `alg` header is rejected — closing
-> algorithm-confusion. (2) **Registered claims:** `iss`, `aud`, and `typ` are validated on verify
-> (wrong issuer/audience/type ⇒ not authenticated); `jti` gives every token a unique id for audit
-> correlation and point revocation. (3) **Key id (`kid`) header:** issued tokens carry a `kid` so
-> the signing secret can be **rotated** (verify selects the key by `kid`, allowing an old+new key
-> overlap window). These are additive to the FUXA-compat claim set (`groups` stays), so existing
-> FUXA tokens keep verifying during migration; active access-token revocation itself is the
-> `tokenVersion` mechanism (D-015).
+> algorithm-confusion. (2) **Registered claims:** `iss`, `aud`, and `type` are validated on verify
+> (wrong issuer/audience/type ⇒ not authenticated). **`iss`/`aud` are validated only when
+> configured** (**D-029**: `settings.auth.jwtIssuer` / `settings.auth.jwtAudience`; when a value is
+> unset the claim is neither issued nor validated, so an unconfigured deployment does not self-reject).
+> `jti` gives every token a unique id for audit correlation and point revocation; `type` is the
+> single token-type discriminator (**D-028**). (3) **Key id (`kid`) header:** issued tokens carry a
+> `kid` naming the current signing key. **Today there is exactly one active key — FUXA's `secretCode`
+> (AC-2.2), so `kid` selects that single key (TO-012, Option A).** True multi-key rotation with an
+> old+new overlap window requires a keyring the FUXA seam does not provide; it is a documented
+> follow-up (**TO-012**), NOT implemented now — `kid` is emitted forward-compatibly so rotation can
+> be added later without reissuing the claim shape. These are additive to the FUXA-compat claim set
+> (`groups` stays), so existing FUXA tokens keep verifying during migration; active access-token
+> revocation itself is the `tokenVersion` mechanism (D-015).
 
 ---
 
@@ -280,14 +293,15 @@ verify(token):
   on JsonWebTokenError (bad signature/format/alg mismatch/iss|aud mismatch)
                                               -> { authenticated: false, reason: 'bad_signature' | 'malformed' }
   on TokenExpiredError (exp in the past)       -> { authenticated: false, reason: 'expired' }
-  if decoded.typ !== 'access'                  -> { authenticated: false, reason: 'wrong_type' }
+  if decoded.type !== 'access'                 -> { authenticated: false, reason: 'wrong_type' }
   on success                                   -> { authenticated: true,
                                                      claims: { id, groups, roles, tokenVersion, jti } }
 ```
 
 > Note: the `algorithms` allow-list, `issuer`/`audience` checks, and `kid`-based key selection are
 > the D-021 hardening; a token whose `alg` header is not in the allow-list (including `none`) or
-> whose `iss`/`aud`/`typ` do not match is **not authenticated**. The exposed `tokenVersion`/`jti`
+> whose `iss`/`aud`/`type` do not match is **not authenticated** (`iss`/`aud` are validated only when
+> configured — **D-029**; `type` is the single D-028 discriminator). The exposed `tokenVersion`/`jti`
 > feed the live-authority re-resolution (D-015) and audit correlation.
 
 The resulting equivalence, which P-007 pins down:
@@ -520,10 +534,13 @@ Refines the master map's **Security Posture** for the Token layer:
   prior stateless design, logout and compromise-response are actually effective.
 - **Algorithm pinning + registered-claim validation (D-021, RFC 8725 — fixes N-017).** `verify`
   passes an explicit `algorithms` allow-list (rejecting `alg: none` and algorithm-confusion),
-  validates `iss`/`aud`/`typ`, and selects the signing key by `kid` to enable secret rotation with
-  an overlap window. This is a baseline hardening the prior minimal claim set lacked.
+  validates `iss`/`aud` **when configured** (D-029) and the `type` discriminator (D-028), and emits a
+  `kid` naming the single active signing key. **Multi-key rotation with an overlap window is a
+  documented follow-up (TO-012, Option A), not implemented now** — the FUXA seam exposes one
+  `secretCode`, so `kid` maps to that one key today. This is a baseline hardening the prior minimal
+  claim set lacked.
 - **No plaintext or secret in claims.** The `Access_Token` payload carries only `id`, `sub`,
-  `groups`, `roles`, `tokenVersion`, `jti`, `iss`, `aud`, `typ`, `iat`, `exp`
+  `groups`, `roles`, `tokenVersion`, `jti`, `type`, `iss`, `aud`, `iat`, `exp`
   ([§3](#3-access_token-claims-structure)) — never a password, hash, or the signing secret.
 
 ---

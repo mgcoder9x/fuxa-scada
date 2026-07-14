@@ -3,29 +3,35 @@
 > Facts, environment details, risks, and gotchas. Facts only. Anything not directly
 > verified is marked `UNVERIFIED`. Schema in `README.md` §3.
 
-### N-001: Runtime environment (verified 2026-07-12)
-- Status: Active
-- Statement:
-  - OS: Windows, shell used by the agent: PowerShell (note: repeated multi-line console output was observed being truncated in this environment — prefer writing results to a file and reading them back).
-  - Node.js: **v25.2.1**; npm **11.6.2** (verified via `node --version`).
+### N-001: Runtime environment — historical old-machine snapshot + current-machine refinement
+- Status: Active fact record; 2026-07-12 values are a **historical old-machine snapshot**, not current workspace state
+- Historical statement (verified 2026-07-12 on the old machine):
+  - OS: Windows; shell: PowerShell. Repeated multi-line console output was observed being truncated in that environment.
+  - Node.js: **v25.2.1**; npm **11.6.2**.
   - FUXA version: **1.3.4-2860** (verified in `server/package.json`).
-  - The workspace is **NOT a git repository** (verified: `git` reported "not a git repository"). It was obtained as a ZIP, not `git clone`.
-- Impact / Risk: FUXA's Dockerfile targets **Node 18**; running on Node 25 is unverified for long-term native-module stability (`sqlite3`, `serialport`). Installed and ran successfully on 2026-07-12, but this is a version mismatch to watch.
+  - That old workspace was **not a git repository** and had been obtained as a ZIP.
+- Current-machine refinement (verified 2026-07-14 by local commands):
+  - OS: **Windows**; Node.js **v24.15.0**; npm **11.12.1**.
+  - The current workspace **is a git repository** on branch **`auth-user-management-spec`**.
+  - Docker server is available at **29.5.2**.
+  - No GPU is **USER-REPORTED** and was **not independently verified**; GPU availability is irrelevant to the auth-management test baseline.
+- Impact / Risk: FUXA's Dockerfile targets **Node 18**; both historical Node 25 and current Node 24 differ from that target, so long-term native-module stability (`sqlite3`, `serialport`) remains a version-mismatch risk even though the current auth-management suite is runnable.
 
-### N-002: How the app is currently run (verified 2026-07-12)
-- Status: Active
-- Statement: FUXA runs directly via Node — `node main.js` in `server/` — serving the prebuilt Angular client from `client/dist`. Server logged "WebServer is running http://127.0.0.1:1881/" and returned HTTP 200. Docker was intentionally removed (disk pressure); see N-004.
-- Impact / Risk: Server is bound to `127.0.0.1` (localhost only) — fine for building UI, NOT reachable from other machines until reconfigured.
+### N-002: How the app was run — historical old-machine snapshot (verified 2026-07-12)
+- Status: Historical old-machine snapshot; current runtime start was not re-verified during N-028 remediation
+- Historical statement: FUXA ran directly via Node — `node main.js` in `server/` — serving the prebuilt Angular client from `client/dist`. The server logged "WebServer is running http://127.0.0.1:1881/" and returned HTTP 200. Docker had intentionally been removed on that old machine because of disk pressure; see historical N-004.
+- Impact / Risk: The historical server was bound to `127.0.0.1` (localhost only). Do not infer the current machine's bind/runtime state from this snapshot without a fresh runtime check.
 
 ### N-003: Where user-created data lives vs. code (verified 2026-07-12)
 - Status: Active
 - Statement: Runtime data (projects/views, users, DAQ) is stored outside source code — `dbDir: '_db'`, `logDir: '_logs'` (verified in `server/settings.default.js`), under an appdata path resolved via `FUXA_APPDATA`/`APPDATA` (verified in `server/paths.js`). Source-code edits are separate and are the part that needs version control to survive FUXA upgrades.
 - Impact / Risk: This distinction is central to the user's upgrade concern: data survives upgrades; custom code needs git-based merge.
 
-### N-004: Disk pressure on C: (verified 2026-07-12)
-- Status: Active
-- Statement: C: had ~14 GB free of ~237 GB. A 14.88 GB WSL **Ubuntu** distro (the user's own, NOT Docker) is a major consumer (verified via Lxss registry). Docker Desktop was fully removed; its footprint was negligible and was not the cause of low disk.
-- Impact / Risk: If a Docker-based path is revisited later, ~2–4 GB must be freed first.
+### N-004: Disk pressure and Docker state — historical old-machine snapshot + current refinement
+- Status: Active fact record; disk figures and Docker removal are a **historical old-machine snapshot**
+- Historical statement (verified 2026-07-12 on the old machine): C: had ~14 GB free of ~237 GB. A 14.88 GB WSL **Ubuntu** distro (the user's own, NOT Docker) was a major consumer. Docker Desktop had been fully removed; its footprint was negligible and was not the cause of low disk.
+- Current-machine refinement (verified 2026-07-14): Docker server **29.5.2** is available. Current free-disk capacity was not re-measured during N-028 remediation. No GPU is **USER-REPORTED**, not independently verified, and irrelevant to the auth-management tests.
+- Impact / Risk: Do not carry the historical disk-pressure or Docker-absent assumptions forward as current facts; re-check capacity before any storage-heavy operation.
 
 ### N-005: FUXA existing auth code to reuse (verified by design subagent 2026-07-12)
 - Status: Active
@@ -44,18 +50,6 @@
 - Impact / Risk: A fresh FUXA instance ships with a guessable admin credential that stays valid indefinitely — a real, exploitable weakness for any exposed deployment. This is exactly the root cause REQ-17 (auto-seed + MANDATORY rotation, P-009) is designed to eliminate. Section 12 must ensure the seeded admin cannot perform any protected action until rotation (AC-17.2).
 - Verification: section 12 design + P-009 test; also cross-check the module's bootstrap does not reuse the literal '123456'.
 
-### D-008: bcrypt cost factor = 12 (configurable), with optional upgrade-on-verify rehash
-- Date: 2026-07-12
-- Phase: Design (section 03)
-- Status: Active
-- Links: REQ-4, D-002, N-007
-- Context: VERIFIED — FUXA hard-codes bcrypt cost 10 (`bcrypt.hashSync(pwd, 10)`), not configurable.
-- Statement: The Password_Hasher uses a configurable cost (`settings.auth.bcryptCost`) defaulting to 12 (>= FUXA's 10). Because bcrypt embeds cost in the digest, legacy cost-10 hashes still verify; an optional upgrade-on-verify re-hashes to 12 on successful sign-in. Property tests run at cost 4 for speed.
-- Rationale: 12 is a contemporary recommended work factor (tens of ms/hash), strictly >= existing hashes so nothing is weakened; embedded-cost means no bulk migration needed.
-- Alternatives considered: Keep 10 (rejected: weaker than current best practice); force immediate bulk re-hash (rejected: cannot re-hash without plaintext — upgrade-on-verify is the only plaintext-free path).
-- Impact / Risk: Slightly higher sign-in CPU; negligible at 12. Test-cost 4 must never leak into production config.
-- Verification: §3.3; example test asserts unconfigured seam produces cost-12 digests and that a cost-10 digest still verifies.
-
 ### N-008: Verified FUXA group-code semantics — corrects a loose phrasing in the master map
 - Status: RESOLVED 2026-07-12 — master map (design.md) corrected to match section 05 §5; both now state -1/255 = admin, 'guest'/absent = guest.
 - Links: REQ-10, section 05 §5.1, design.md reconciliation section
@@ -63,15 +57,23 @@
 - Impact / Risk: The master map (design.md) reconciliation bullets list `-1` under BOTH admin and guest — contradictory and incorrect. Section 05 uses the verified meaning (`-1`/`255` = admin; `'guest'`/absent = guest). The master map must be corrected so source-of-truth documents agree (anti-drift).
 - Verification: after correction, design.md and section 05 §5 must state identical group-code semantics.
 
+### N-009: FUXA getRoles has no per-record try/catch — one corrupt role fails the whole batch
+- Date: 2026-07-12
+- Phase: Design (section 06)
+- Status: Active (gap closed by module)
+- Links: REQ-13 (AC-13.4)
+- Statement: VERIFIED — `server/runtime/users/index.js` getRoles does `JSON.parse(drows[id].value)` with NO try/catch, so a single corrupt role `value` throws and rejects the entire getRoles batch. (By contrast, `removeRoles` and `_loadUsers` DO wrap per-record parse in try/catch — verified.)
+- Impact / Risk: In FUXA, one bad role row breaks all role listing. The module's Role_Store.readAll routes every row through the resilient `deserialize`, isolating the bad record (AC-13.4).
+- Verification: §4.3 + the roles-gap regression test in §9.2.
+
 ---
 
-## Deep design-review findings (2026-07-13) — verified defects in the DESIGN (pre-implementation)
+## Deep design-review findings (2026-07-13) — historical defects, all resolved
 
-> These entries record defects found by re-reading the design against the actual FUXA source
-> **before any implementation**. Each is a verified fact (file + section cited), not speculation.
-> The proposed root-cause resolutions are logged as OPEN decisions D-014…D-023 (`01-ai-decisions.md`)
-> and their trade-offs as TO-007…TO-011 (`03-tradeoffs.md`). Nothing here has been fixed yet —
-> these gate implementation via `GATES.md`.
+> These entries preserve the verified defects found by re-reading the design against the actual FUXA
+> source before implementation. Every finding N-010…N-019 and N-021 is now RESOLVED by the cited
+> enacted D/DV/design/traceability change. Their original defect statements remain as provenance;
+> none is a current implementation gate.
 
 ### N-010: Persistence atomicity is self-contradictory and infeasible as specified (CRITICAL)
 - Date: 2026-07-13
@@ -180,37 +182,30 @@
 - Phase: (ledger maintenance)
 - Status: Active — remediated (file rebuilt) + prevention added
 - Links: `decisions/03-tradeoffs.md`, `decisions/00-INDEX.md`, `decisions/GATES.md`
-- Statement: VERIFIED — on 2026-07-13 the trade-offs ledger file was found to contain an unrelated chat transcript instead of TO-* entries; the original content was destroyed and (workspace is not git, N-001) unrecoverable from VCS. TO-001/002/004/005/006 were reconstructed from surviving cross-references; TO-003 was unrecoverable and is quarantined.
+- Statement: VERIFIED — on 2026-07-13 the trade-offs ledger file was found to contain an unrelated chat transcript instead of TO-* entries; the original content was destroyed and was unrecoverable from VCS because the **historical N-020 old-machine workspace** was not a git repository. The current transferred workspace is a git repository. TO-001/002/004/005/006 were reconstructed from surviving cross-references; TO-003 was unrecoverable and is quarantined.
 - Impact / Risk: Loss of decision provenance is itself drift. This is the concrete failure the anti-drift kit must prevent going forward.
 - Root cause: no integrity manifest / no protection against whole-file overwrite of ledger files.
 - Verification: `00-INDEX.md` now declares each file's required purpose/markers; `GATES.md` requires an integrity check every phase transition; the steering file forbids overwriting ledger files (append-only).
 
-### N-021: traceability §D (Design→Task→Test) is still empty although tasks.md exists
+### N-021: Historical traceability §D gap — resolved at G3
 - Date: 2026-07-13
 - Phase: Tasks
-- Status: Active — OPEN gap
-- Links: `traceability.md` §D, tasks.md
-- Statement: VERIFIED — `traceability.md` §D is still the placeholder "_pending — populated when tasks.md is generated_" even though `tasks.md` exists with tasks and a dependency graph. The bidirectional map is therefore not closed on the Task→Test side, and P-010/P-011/P-012 (confirmed 2026-07-12) have no test-mapping row.
-- Impact / Risk: The anti-drift engine's core artifact is incomplete; drift between design, tasks, and tests is not detectable until §D is filled.
-- Root cause: §D not populated at the Design→Tasks transition (the protocol step was skipped).
-- Verification: §D must list every DES-* → its TASK-* → its test/property; resolution is part of the pre-implementation gate (GATES.md G3).
+- Status: **RESOLVED 2026-07-13** — traceability §D is populated and G3 passed
+- Links: `traceability.md` §D, tasks.md, `GATES.md` G3
+- Historical statement: At discovery time, `traceability.md` §D still contained the placeholder "_pending — populated when tasks.md is generated_" although `tasks.md` already existed; P-010/P-011/P-012 had no test-mapping row.
+- Resolution: §D now maps every DES-* to implementation task(s) and test/property task(s), and P-001…P-016 each has an owner. This historical gap is no longer a current gate.
+- Root cause: §D was not populated at the original Design→Tasks transition.
+- Verification: traceability §D is populated; §E records no orphans; G3 is marked passed in `GATES.md`.
 
-### N-022: Node dependencies are NOT installed in the current workspace — audit dedicated-file path verified only via its fallback (verified 2026-07-13)
+### N-022: Historical dependency-absence verification limitation — resolved; JWT runtime coverage still belongs to Task 5
 - Date: 2026-07-13
-- Status: **RESOLVED (superseded for verification purposes by N-023)** — `server/node_modules` is now
-  PRESENT (verified 2026-07-13: `winston`, `bcryptjs`, `jsonwebtoken`, `mocha`, `sinon`,
-  `fast-check@3.23.2`, `sqlite3` all resolve). The "deps absent → runtime verification deferred"
-  limitation below no longer holds. The deferred runtime checks it lists (task 11.4 dedicated-file
-  separation + async transport-`error` health path; and the cost-4 hash / real-crypto round-trip
-  checks deferred by tasks 3.1/5.1) are now RUNNABLE and MUST be run to close the corresponding
-  G5 DoD rows in traceability §D. Kept (not deleted) as the provenance of why those rows were
-  initially marked "verified via node sanity only".
+- Status: **RESOLVED** — the dependency-absence limitation is historical; server dependencies are present on the current machine. Audit dedicated-file/health behavior was subsequently exercised by Task 11.4. **Real JWT cryptographic round-trip behavior is not claimed verified here and remains pending until Task 5.**
 - Phase: Implementation (task 11.1)
 - Original status: Active — verification limitation (not a code defect)
 - Links: task 11.1, D-023, `design/09` §6.2/§10.3/§10.4, N-004 (disk pressure), N-001, N-023
-- Statement: VERIFIED — there is no `server/node_modules` and `winston` does not resolve anywhere in the workspace (`require.resolve('winston')` throws; a recursive search found no `winston` package dir). FUXA had been installed on 2026-07-12 (N-001/N-002) but the dependency tree is currently absent (consistent with the N-004 disk-pressure cleanup). Consequence for task 11.1: `createFuxaAuditSink` could not construct the real module-owned winston `File` transport at `${logDir}/fuxa-audit.log`, so its D-023 **fallback** path engaged — audit is routed through the shared `fuxaLogger.info(line, true)` and `health()` reports `{ ok:true, degraded:true, fallback:true, lastError:'dedicated_transport_unavailable: Cannot find module winston' }`. All 20 `node` sanity checks passed, including: valid event → one `AUDIT `+JSON line with only supplied keys; richer optional fields (actor/target/sourceIp/device/sessionId/correlationId/changes[]) copied while secret/unknown keys (password/passwordHash/token/injected) are dropped; malformed event (missing subject) writes an internal diagnostic and emits no normal line without throwing; a sink whose `write` throws does not propagate out of `record()`; and a dedicated sink whose transport write throws flips `health().ok=false` with `lastError` and writes a FUXA error-channel diagnostic without throwing.
-- Impact / Risk: The **dedicated-file separation** assertions (§10.4 item 1: audit lines land in `fuxa-audit.log` and NOT `fuxa.log`; independent rotation) and the real winston async transport-`error` health path cannot be exercised until `npm install` is run under `server/`. The implemented behavior for that path is code-reviewed and structurally correct (own `File` transport, own `maxsize`/`maxFiles`, `dedicated.on('error', …)` health hook), but is UNVERIFIED at runtime in this environment. Task 11.4 (the dedicated-sink/health/hash-chain test task) MUST be run after dependencies are installed to close this.
-- Verification: after `npm install` under `server/`, re-run task 11.4 and confirm two `AUDIT ` lines appear in `${logDir}/fuxa-audit.log` (and none in `fuxa.log`) and that `health().fallback` is falsy on the dedicated path.
+- Historical statement (verified at discovery time): there was no `server/node_modules` and `winston` did not resolve anywhere in that workspace state (`require.resolve('winston')` threw; a recursive search found no `winston` package dir). FUXA had been installed on 2026-07-12 (N-001/N-002) but the dependency tree was absent, consistent with the historical N-004 cleanup. Consequently, task 11.1's `createFuxaAuditSink` could not construct the real module-owned winston `File` transport at `${logDir}/fuxa-audit.log`, so its D-023 **fallback** path engaged — audit routed through the shared `fuxaLogger.info(line, true)` and `health()` reported `{ ok:true, degraded:true, fallback:true, lastError:'dedicated_transport_unavailable: Cannot find module winston' }`. All 20 historical `node` sanity checks passed, including: valid event → one `AUDIT `+JSON line with only supplied keys; richer optional fields (actor/target/sourceIp/device/sessionId/correlationId/changes[]) copied while secret/unknown keys (password/passwordHash/token/injected) were dropped; malformed event (missing subject) wrote an internal diagnostic and emitted no normal line without throwing; a sink whose `write` threw did not propagate out of `record()`; and a dedicated sink whose transport write threw flipped `health().ok=false` with `lastError` and wrote a FUXA error-channel diagnostic without throwing.
+- Historical impact / risk: At discovery time, dedicated-file separation and the real winston async transport-error path could not be exercised. That audit limitation is now closed: `audit-logger.test.js` exercises the dedicated `fuxa-audit.log` transport and health behavior. The separate JWT real-crypto coverage was never established by N-022 and remains pending under Task 5.
+- Verification: current full auth-management baseline includes the audit tests. **UPDATE 2026-07-14 (N-031):** Task 5.2/5.6 landed `token-service.test.js` with REAL HS256 crypto — P-007 (@200 iters, 4 quadrants) and P-008 (@200 iters) now exercise the actual `jsonwebtoken` sign/verify round-trip, closing the N-022 real-crypto gap **for the access-token path**. **UPDATE 2026-07-14 (N-033): the refresh-token real-crypto round-trip is now verified too** — Task 5.7 landed `refresh-token-store.test.js` (P-015 @120 model-based + all `refresh()` outcome branches, real sqlite + `jsonwebtoken`). The N-022 real-crypto limitation is fully closed for §02 (access + refresh). The only remaining §02 gap is the API-layer HTTP wiring (Task 13).
 
 
 ### N-023: Test toolchain reality — chai@5 is ESM-only; module tests use `node:assert`; fast-check added
@@ -351,3 +346,100 @@
   in <1000ms total (was ~9.6s each), and `hash` throws `invalid_password_encoding` fast. Also: the
   P-002 property generator was corrected to drop the last CODE POINT (not code unit) so it never
   fabricates a lone surrogate (that mutation bug is what first exposed N-027 as a 30s test timeout).
+
+
+### N-028: G0 integrity failure on machine transfer — ledger domain/order/status drift and embedded Git credential
+- Date: 2026-07-14
+- Phase: Ledger maintenance / session entry
+- Status: **Local remediation complete; post-repair checks PASSED 2026-07-14.** External PAT revoke/rotate remains **USER ACTION REQUIRED / UNVERIFIED**. Implementation may resume under G5 at Task 5.
+- Links: `decisions/00-INDEX.md` §1/§4, `01-ai-decisions.md`, `03-tradeoffs.md`, `04-notes.md`, `traceability.md` §E/§F, `GATES.md` G0/G1, `tasks.md`, `end.md`
+- Statement: VERIFIED on the transferred workspace before any module-code edit:
+  1. `01-ai-decisions.md` violated its declared file domain by containing `TO-006` and `N-009`; `04-notes.md` contained `D-008`. `TO-006` already has an equivalent canonical entry in `03-tradeoffs.md`, while D-008 and N-009 had no canonical copy in their owning files.
+  2. The D sequence was not monotonic (`D-004`/`D-005` appeared before `D-003`) and D-005 appeared under two headings (original OPEN proposal + UPDATE), contradicting the no-reuse/monotonic manifest rule despite the UPDATE explicitly superseding the proposal.
+  3. `TO-007…TO-011` and section headings in `01-ai-decisions.md`/`02-deviations.md`/`03-tradeoffs.md` still said OPEN, although D-014/D-015/D-017/D-019 and DV-006 plus their design/requirement changes are already Active (CONFIRMED). N-021 and traceability §E/§F still described pre-G3/pre-G4 state although G3/G4 passed.
+  4. `tasks.md` checkboxes lagged the verified test status (`6.2/6.3`, `11.3/11.4`) and marked parent 2/9 inconsistently; Task 4 checkpoint remained open despite the historical 42-passing baseline.
+  5. The local Git remote URL still contained an embedded GitHub PAT despite `end.md` claiming it had been removed. The URL was immediately replaced locally with `https://github.com/mgcoder9x/fuxa-scada.git` without printing or transmitting the credential. The exposed PAT must be revoked/rotated by the user in GitHub.
+- Root cause: historical phase transitions updated the enacted D/DV entries and designs, but did not atomically reconcile all ledger headings/status summaries/checklists; early entries were appended to the wrong ledger files before the strict manifest existed. The handoff trusted those summaries instead of rerunning the full domain/order check.
+- Remediation: COMPLETED locally — stable IDs/substance were preserved while D-008/N-009 were relocated, the redundant wrong-domain TO-006 copy was removed (canonical TO-006 retained), D-005 was consolidated, D order restored, TO-007…TO-011 marked DECIDED with exact winners, and derived G1/traceability/tasks/end status reconciled. No requirement/design decision or production/test code was changed. The local remote named `orgin` is a clean HTTPS URL without embedded credentials; external PAT revoke/rotate remains USER ACTION REQUIRED / UNVERIFIED.
+- Impact / Risk: The local G0 integrity failure is repaired and the implementation pause is lifted after successful checks. Residual external risk remains: the PAT that appeared in local config may be compromised; changing the URL does not revoke it, and external revocation/rotation is USER ACTION REQUIRED / UNVERIFIED.
+- Verification: post-repair heading/domain/status checks passed; `git remote -v` was inspected without printing secrets and the local `orgin` URLs contain no embedded credential; the required full suite command from `server/` exited **0** with **42 passing (3s)**. Task 5 itself remains unstarted.
+
+### N-029: VERIFIED DEFECT — store metadata round-trip loses/mishandles a `__proto__` key (P-003 property failure + latent prototype-manipulation)
+- Date: 2026-07-14
+- Phase: Implementation / G5 baseline verification (Task 2 — §06)
+- Status: **RESOLVED 2026-07-14** — fixed at the root by D-026 (`deserialize` strips `__proto__`; adapters compose with object-spread define-semantics; the P-003/P-005 metadata generators exclude `__proto__`). Full suite green and stable.
+- Links: D-026, REQ-13 (AC-13.1/AC-13.3), P-003, P-005, `store/serialization.js`, `adapters/fuxa-user-store.adapter.js`, `adapters/fuxa-role-store.adapter.js`, `design/06` §3.2/§4.2/§9
+- Statement: VERIFIED. On independent re-run of the auth-management baseline (the handoff/`end.md` claimed a stable "42 passing"), the run was **41 passing / 1 FAILING**: `store-adapters.test.js` Property 3 (User_Record write→read round-trip, P-003) failed with fast-check `{ seed: 713723753 }`, counterexample `metadata: {["__proto__"]: ""}` — read-back `metadata` was `{}` (the `__proto__` key was lost). The failure was **seed-dependent** (why the handoff's earlier run passed), so the suite was effectively flaky. Root cause, reproduced with `node -e`: `JSON.parse('{"__proto__":""}')` creates an OWN, enumerable `__proto__` data property (parse is pollution-safe), but the adapter reconstructed `metadata` with `Object.assign({}, parsed)` — `Object.assign` uses `[[Set]]`, which invokes `Object.prototype`'s `__proto__` **accessor** on the fresh target: a primitive value is silently DROPPED (`{}`), and — verified separately — a `{"__proto__":{x:1}}` value REASSIGNS the target object's prototype (`Object.getPrototypeOf(out) !== Object.prototype`, `out.x === 1`). The same `Object.assign`-on-parsed-JSON pattern existed in `_composeInfo` (write) and the role adapter's delete-fallback.
+- Impact / Risk: (1) a stated correctness property (P-003) was false for a metadata object with a `__proto__` key, and the suite was non-deterministically red; (2) latent prototype-manipulation reading a hostile or FUXA-written `info`/`value` row (narrow — module authority reads roles/permissions from the store, not `metadata`, per D-015 — but unacceptable for a commercial IAM). This falsifies the handoff's "42 passing" as an unconditional claim.
+- Root cause: rebuilding an object from JSON-parsed (untrusted) data with `[[Set]]`-based copying, with no reserved-key hardening for the `__proto__` accessor.
+- Verification: after D-026, `deserialize` strips own `__proto__` at every depth and the adapters use object-spread (define-semantics); new deterministic tests pin the guarantee (`serialization.test.js` — top-level/nested strip + no-prototype-reassignment + `constructor`/`prototype` preserved; `store-adapters.test.js` — a stored `info.__proto__` payload reads back clean with untouched prototype). Full auth-management suite: **47 passing, exit 0**, stable across 4 consecutive runs. The `constructor`/`prototype` keys are confirmed NOT stripped (they have no `[[Set]]` accessor and are plausibly legitimate data).
+
+### N-030: Token & Session design-validation pass (pre-Task-5) — 5 latent design defects found and resolved
+- Date: 2026-07-14
+- Phase: Design validation (§02/§05/§11) — before any Task 5 code
+- Status: **RESOLVED 2026-07-14** — all five findings fixed in the design + ledger (D-027, D-028, D-029, TO-012) before implementation; no production/test code changed by this pass. The auth-management test suite is unaffected (still 47 passing) because only design/ledger `.md` files changed.
+- Links: DEF-T1..T5, D-027, D-028, D-029, TO-012, D-015, D-021, D-019, `design/02`, `design/05` §4.1, `design/11` §3.1/§3.4/§3.5/§4.3, `server/api/jwt-helper.js`, `server/api/auth/index.js`, `server/auth-management/services/interfaces.js`
+- Method: re-read `design/02` line-by-line against `requirements.md` (REQ-2/REQ-3), the governing decisions (D-015/D-019/D-021), and the ACTUAL FUXA source (`jwt-helper.js`, `auth/index.js`) — all FUXA-behavior claims in the design were confirmed accurate. The defects were internal design inconsistencies/gaps, exactly the class the pre-implementation gate exists to catch (cf. the N-010…N-019 deep review).
+- Findings (each VERIFIED by the cited location):
+  - **DEF-T1 (HIGH):** `design/02` §2.1 `Identity` omitted `tokenVersion` although §3/AC-2.1 require encoding it and `interfaces.js` already declares it → active revocation (D-015) would silently degrade. Fixed by **D-027**.
+  - **DEF-T2 (HIGH):** D-021's `kid` "rotation with overlap window" is infeasible over FUXA's single `secretCode` (no keyring); no requirement mandates rotation. Resolved by **TO-012** (Option A: forward-compat `kid`, single active key, rotation documented as follow-up).
+  - **DEF-T3 (MEDIUM):** a parallel `typ` payload claim (checked only on the access path) coexisted with FUXA's `type` (checked on the refresh path); §6.1 listed `type` not `typ`, contradicting §3; `typ` also collides with the JWT header parameter. Fixed by **D-028** (single `type` claim).
+  - **DEF-T4 (LOW):** `iss`/`aud` validated but their settings keys were unnamed and unset-behavior undefined (self-reject risk). Fixed by **D-029** (`settings.auth.jwtIssuer`/`jwtAudience`; validate only when configured).
+  - **DEF-T5 (HIGH):** `metadata.tokenVersion` was undefined in the §11 data model and the §05 comparison had no absent-value default — `undefined < 1` is `false`, so a legacy token would NOT be revoked after a bump (revocation bypass). Fixed by **D-027** (field default 0 + absent→0 coercion on both sides).
+- Impact / Risk: had Task 5 been coded against the pre-pass design, DEF-T1/T5 would have shipped a silent revocation bypass and DEF-T2 a false "rotation" capability. The pass prevented leaf-level rework by fixing the contract/data-model/trade-off at the root first.
+- Verification: design edits applied and re-read for consistency (`typ` fully replaced by `type` in §02; `tokenVersion` present in §02 §2.1, §11 §3.1/§3.4/§3.5/§4.3, §05 §4.1 with absent→0 coercion). Integrity Check re-run after the ledger appends. The per-property verification of these fixes is owned by Task 5 (P-007) and Task 8 (P-013) and is explicitly still PENDING — no runtime claim is made here.
+
+### N-031: Task 5 REQ-2 increment — Token_Service issue/verify/expiry + hardening implemented and verified (real crypto)
+- Date: 2026-07-14
+- Phase: Implementation (Task 5.2/5.3/5.4/5.5-partial/5.6 — §02)
+- Status: **DONE for REQ-2** (issue/verify/expiry + D-021/D-027/D-028/D-029 hardening). **REQ-3 (refresh rotation, 5.7/5.8) NOT started** — `refresh()` is an honest `not_implemented` stub, not faked.
+- Links: D-021, D-027, D-028, D-029, TO-012, N-022, N-030, REQ-2, P-007, P-008, `server/auth-management/services/token.service.js`, `server/test/auth-management/token-service.test.js`
+- Statement: Implemented `services/token.service.js` against the corrected `design/02` — `issueAccessToken` (hardened claim set: `id`/`sub`/`groups`/`roles`/`tokenVersion`/single `type:'access'`/`jti`, `kid` header when configured, `iss`/`aud` only when configured), `issueRefreshToken` (FUXA-compatible `{id,type:'refresh',jti,family_id,tokenVersion}` + returns the ids the store will persist), `verify` (algorithm pinning, `type==='access'`, `iss`/`aud` when configured, closed `VerifyResult` reason mapping missing/expired/bad_signature/malformed/wrong_type), and the §4 expiry decision table (Row1 configured / Row2 finite 3600s default / Row3 dev-only-non-prod no-exp). No FUXA core edited; the service depends only on the injected Token seam (D-003).
+- Impact / Risk: REQ-2 is code-complete and property-verified with real crypto. REQ-3 refresh (stateful rotation + reuse detection) is deliberately deferred to keep each increment verifiable; `refresh()` throws `not_implemented` so no caller can mistake it for a working rotation. The service is not yet wired into any router/composition root (Task 13).
+- Verification: `token-service.test.js` — **10 passing** incl. P-007 (@200, real HS256, 4 quadrants + claim exposure), P-008 (@200, all 3 expiry rows + §4.1 safety invariants), alg:none rejection, single-`type`/no-`typ`, `iss`/`aud`-when-configured, `kid` header, and the `refresh()` not_implemented guard. Full auth-management suite: **57 passing, exit 0, stable across 3 runs**. Real refresh-path crypto (P-015) remains PENDING (Task 5.7).
+
+### N-032: VERIFIED DEFECT — FuxaAuthDb.transaction() crashed on concurrent transactions (single-connection nesting)
+- Date: 2026-07-14
+- Phase: Implementation (Task 5.7 — §06 store seam), surfaced by the D-030 CAS concurrency test
+- Status: **RESOLVED 2026-07-14** — fixed at the root by an in-process transaction serializer in `FuxaAuthDb.transaction()`; verified by the concurrent-double-consume test + full suite (71 passing, stable).
+- Links: `server/auth-management/store/fuxa-auth-db.js`, D-016, D-020, D-030, N-016, REQ-13
+- Statement: VERIFIED. `FuxaAuthDb` uses ONE shared sqlite3 connection. Two overlapping `transaction()` calls each issue `BEGIN IMMEDIATE` on that single connection; the second throws `SQLITE_ERROR: cannot start a transaction within a transaction`. Reproduced by firing two `consumeAndRotate` (each a `BEGIN IMMEDIATE` transaction) via `Promise.all`. `BEGIN IMMEDIATE` serializes writers across DIFFERENT connections, but a single connection cannot hold two overlapping transactions, and Node's async interleaving lets two `transaction()` calls overlap. This was latent since Task 2 (the store-adapter tests never exercised concurrent transactions) and would also affect the D-020 last-admin `BEGIN IMMEDIATE` guard (Task 9) under real concurrency.
+- Impact / Risk: any two concurrent transactional writes on the module connection (concurrent refresh rotations, concurrent creates/deletes) would crash the second with a 500-class error rather than serializing — a real availability/correctness defect for a commercial deployment.
+- Root cause: the design's atomicity story assumed `BEGIN IMMEDIATE` serializes writers, which is true across connections but NOT within one shared connection; `transaction()` had no in-process serialization.
+- Remediation (root, not leaf): `FuxaAuthDb.transaction()` now chains transactions through an in-process promise queue (`_txQueue`) — each transaction waits for the previous to COMMIT/ROLLBACK before it BEGINs, with the gate released in a `finally` so a failing transaction cannot deadlock the queue. `BEGIN IMMEDIATE` is retained, so serialization holds BOTH in-process (the queue) and across other connections e.g. FUXA's own (the SQLite write lock).
+- Residual risk (UNVERIFIED / noted, not yet addressed): non-transactional `run()/all()` submitted on the shared connection WHILE a transaction is open would be executed by sqlite within that open transaction (same connection). The current call paths do not interleave a bare write into an open transaction (e.g. `getByJti` runs before `consumeAndRotate`), but a fully concurrency-safe design would either route every write through the queue or use a per-operation connection. Flagged for the API-layer/Task 13 review; not a defect in the current flows.
+- Verification: `refresh-token-store.test.js` "consumeAndRotate is single-use under a concurrent double-consume" (two parallel consumes → exactly one wins, no crash); full auth-management suite 71 passing, stable across runs.
+
+### N-033: Task 5 REQ-3 increment — Refresh_Token_Store + Token_Service.refresh implemented and verified (real crypto)
+- Date: 2026-07-14
+- Phase: Implementation (Task 5.7/5.8, and the refresh half of 5.2/5.5 — §02 §6)
+- Status: **DONE for the §02 service layer.** The API-layer wiring (router mount, cookie I/O, HTTP status mapping, the `disabled` short-circuit, sign-out endpoint) is Task 13 — NOT done here.
+- Links: D-019, D-030, N-032, N-015, REQ-3, P-015, RFC 9700, `server/auth-management/store/refresh-token-store.js`, `server/auth-management/services/token.service.js`, `server/test/auth-management/refresh-token-store.test.js`
+- Statement: Implemented the stateful `Refresh_Token_Store` (`auth_refresh_tokens` table on the module-owned connection; `active→used→revoked` state machine; SHA-256 at-rest; CAS consume; family revocation) and wired `TokenService.refresh()` to the design/02 §6.2 flow: verify (sig/expiry + `type==='refresh'`) → store lookup + hash match + reuse detection → live-account + `tokenVersion` check (D-015/D-027) → atomic consume-and-rotate. Added `TokenService.revokeRefreshFamily` for sign-out/password-change/disable revocation (wiring in Task 13). `refresh()` returns a closed `RefreshOutcome`, never throws for control flow.
+- Impact / Risk: REQ-3 refresh rotation/reuse-detection is code-complete and property-verified with real crypto; this closes the N-022 refresh-path real-crypto gap. Not yet mounted in any router (Task 13), so it is not reachable over HTTP yet.
+- Verification: `refresh-token-store.test.js` — 14 passing incl. P-015 (@120, model-based, real crypto) and all `refresh()` outcome branches. Full auth-management suite: **71 passing, exit 0, stable across runs**.
+- Test-stability note: P-015 initially ran against the file-backed WAL DB and intermittently exceeded its 30s timeout under full-suite disk contention (120 iters × multiple `BEGIN IMMEDIATE` fsync transactions). Root-fixed by running the P-015 STATE-MACHINE property against an **in-memory** sqlite DB (identical logic, no fsync latency), keeping the full 120 iterations; the file-backed persistence path stays covered by the deterministic integration tests. Suite now runs in ~3–6s, stable across 3 consecutive runs.
+
+### N-034: VERIFIED LOOP HAZARD — the save-time integrity-guard hook could self-trigger (fixed: made strictly read-only)
+- Date: 2026-07-14
+- Phase: Anti-drift infrastructure / tooling
+- Status: **RESOLVED 2026-07-14** — `.kiro/hooks/auth-um-save-time-integrity-guard.kiro.hook` rewritten to version 2: strictly read-only, an explicit ABSOLUTE ANTI-LOOP RULE forbidding any file write, and on failure STOP-and-report to the user (remediation happens in a separate normal turn or via the userTriggered audit hook).
+- Links: `.kiro/hooks/auth-um-save-time-integrity-guard.kiro.hook`, `.kiro/steering/auth-user-management-antidrift.md` §"Layered anti-drift defense" item 4, N-020 (the incident this guard defends), N-024 (guard added)
+- Statement: VERIFIED circular dependency in the hook as originally written. `when.type = fileEdited` with patterns including `.kiro/specs/auth-user-management/decisions/*.md`; `then.type = askAgent` whose prompt instructed, on failure, to "log a new incident in `00-INDEX.md` §3 + a new `N-*` in `04-notes.md`." Both `00-INDEX.md` and `04-notes.md` MATCH the `decisions/*.md` trigger pattern, so the guard's own remediation write would re-fire the guard → check → write → … an infinite loop. Independently, because an implementation turn saves many decisions/design/tasks files, the fileEdited guard fans out into a burst of agent invocations per turn. (The exact tightness of the loop depends on whether Kiro's `fileEdited` counts agent writes as save events — NOT asserted here without verification — but the circular design is a hazard either way.)
+- Impact / Risk: an anti-drift guard that can edit the files it watches is self-defeating: it risks an infinite agent loop and, at minimum, a noisy burst of agent runs on every batch of edits. This also DRIFTED from the steering file, which already described this guard as "read-only (reports only; edits nothing) so it cannot loop" — the implementation contradicted its own documented contract.
+- Root cause: the hook's action was given write/remediation responsibilities on the same file domain it triggers on. An automatic `fileEdited` hook must be strictly read-only (report only) to be loop-safe; remediation belongs in a separate, non-automatic turn.
+- Remediation (root): rewrote the hook to be strictly read-only with an explicit anti-loop rule; it now reports PASS or STOPS-and-asks and never writes. This reconciles the hook with the steering's stated contract. Editing files under `.kiro/hooks/` does not match the guard's `.kiro/specs/...` patterns, so this fix itself does not trigger the guard.
+- Residual (honest): the read-only guard still fires once per matching save. That is bounded and non-looping, but during heavy agent editing it can still fan out; if that noise is undesirable, the alternative is to convert it to `userTriggered` (manual) like the deep-audit hook and rely on the auto-loaded steering + the G0/phase-transition Integrity Check as the automatic layers. Offered as a user choice; NOT changed unilaterally because automatic save-time detection is the "cực mạnh" protection the user asked for.
+- Verification: hook file is valid JSON, version 2, `then.prompt` contains the ABSOLUTE ANTI-LOOP RULE and no write instruction. The two other loop candidates were checked and cleared: `FuxaAuthDb._txQueue` (bounded promise chain, gates GC'd, deadlocks only on unused nested-transaction re-entrancy — documented constraint) and `stripProtoKeys` (JSON.parse output is acyclic ⇒ recursion terminates).
+
+### N-035: Task 7 increment — Authentication_Service implemented + verified; §01 reconciled to D-027 and the canonical `get` lookup
+- Date: 2026-07-14
+- Phase: Implementation (Task 7 — §01) + design reconciliation (DEF-A1/DEF-A2)
+- Status: **DONE for the §01 service layer** (sign-in decision). Router-level integration (real HTTP) is Task 13; deferred and noted.
+- Links: REQ-1, D-006, D-007, D-027, D-031, DV-006, `server/auth-management/services/authentication.service.js`, `server/test/auth-management/authentication.service.test.js`, `design/01-authentication.md`
+- Design-validation findings (fixed in `design/01` BEFORE coding, per the prepare→validate→implement rule):
+  - **DEF-A1 (design lag):** §01 §3 showed `issueAccessToken({ username, groups, roles })` — missing `tokenVersion`, which D-027 made mandatory end-to-end for active revocation. Left as-is it would re-open the N-011/DEF-T1 gap. Reconciled: §01 §3 now passes `{ username, groups, roles, tokenVersion }`, sourced from the live record's `metadata.tokenVersion` (default 0).
+  - **DEF-A2 (naming drift):** §01 referenced `User_Store.findUser(username)` (the D-006 name), but the implemented interface + adapter and §06 canonicalized the lookup as `get(username)`. Reconciled: §01 §3/§6/§7 now say `get(username)`; D-006's substance (only the username reaches the store — no query-injection via extra body fields) is preserved because `get(username)` takes only a username. (D-006 given a REFINEMENT note.)
+- Statement: Implemented `services/authentication.service.js` — a pure decision over injected seams (User_Store.get / Password_Hasher.verify / Token_Service.issueAccessToken / BruteForceGuard / Audit_Logger), imports NO bcryptjs/jsonwebtoken (AC-1.5 structural). Decision order per §3/§7: field-presence FIRST (missing_field, not counted) → brute-force pre-check (rate_limited/429) → `get(username)` → password compare via the Hash seam → success mints the token with the live identity incl. tokenVersion (D-027) and resets the guard. DV-006 enforced: unknown-user and bad-password return an identical client-facing `invalid_credentials`/no-token result, with a dummy-hash verify (D-031) for timing parity; server-side audit keeps the finer outcome. Token-issuance failure after a valid credential rethrows (→ 5xx), never a partial success.
+- Impact / Risk: REQ-1 sign-in decision is code-complete and example/edge-verified. Not reachable over HTTP yet (no router — Task 13). Task 7.3 router-level integration is deferred to Task 13.
+- Verification: `authentication.service.test.js` — 10 passing (AC-1.1 success + live identity/tokenVersion; AC-1.2 unknown+dummy-verify; AC-1.3 bad password; DV-006 identical client view; AC-1.4 missing-field precedence with store/guard untouched; rate_limited short-circuit; blank-hash → bad_password; token-failure rethrow; secret-free audit; AC-1.5 no bcrypt/jwt import). Full auth-management suite: **81 passing, exit 0, stable across runs**.

@@ -3,15 +3,19 @@
 > Tương ứng **Task 5** trong `../tasks.md`. Requirement: 2.1–2.8, 3.1–3.3.
 > Thiết kế: `../design/02-token-and-session.md`. Sở hữu property **P-007, P-008** (+ P-015 refresh).
 
-> ### ⚠️ ĐỐI CHIẾU (2026-07-13) — GHI ĐÈ theo D-019, D-021, D-015
+> ### ⚠️ ĐỐI CHIẾU (2026-07-13, cập nhật 2026-07-14) — GHI ĐÈ theo D-019, D-021, D-015 (+ D-027/D-028/D-029/TO-012)
 > Refresh "xoay vòng" phiên bản cũ là **stateless** — token cũ vẫn sống tới hạn (defect **N-015**). Sửa:
 > - **D-019 (task 5.7, P-015 tại 5.8):** thêm **`Refresh_Token_Store`** phía server (hash-at-rest,
 >   `family`/`jti`/`parent_jti`/`state`), **consume-and-rotate atomic**, **reuse-detection RFC 9700**
 >   (replay token đã dùng ⇒ thu hồi cả family), thu hồi family khi sign-out/đổi mật khẩu/disable.
-> - **D-021 (task 5.6):** pin `algorithms` khi verify (chặn alg-confusion), thêm & validate
->   `iss`/`aud`/`sub`/`jti`/`typ`, thêm `kid` để xoay khóa (`../design/02` §3/§5/§7).
-> - **D-015:** đóng dấu **`tokenVersion`** vào access token để thu hồi chủ động; token `roles`/`groups`
->   chỉ để tương thích, **không** phải nguồn thẩm quyền (xem guide 07 & `../design/05` §4.1).
+> - **D-021 (task 5.6), đã tinh chỉnh 2026-07-14:** pin `algorithms` khi verify (chặn alg-confusion);
+>   thêm `sub`/`jti`; validate `iss`/`aud` **chỉ khi được cấu hình** (`settings.auth.jwtIssuer`/`jwtAudience`,
+>   **D-029** — chưa cấu hình ⇒ không phát hành & không validate); dùng **một claim `type` duy nhất**
+>   (`access`/`refresh`), **KHÔNG** dùng `typ` riêng (**D-028**); phát `kid` trỏ **một khóa đang dùng** —
+>   xoay nhiều khóa (overlap) là việc để sau, **không** dựng keyring bây giờ (**TO-012**, phương án A).
+> - **D-015 (+ D-027):** đóng dấu **`tokenVersion`** (đọc từ tài khoản sống, mặc định 0) vào access token
+>   để thu hồi chủ động; so sánh ép giá trị vắng về 0 ở §05 §4.1; token `roles`/`groups` chỉ để tương thích,
+>   **không** phải nguồn thẩm quyền (xem guide 07 & `../design/05` §4.1). `Identity` mang `tokenVersion`.
 
 ## Mục tiêu
 

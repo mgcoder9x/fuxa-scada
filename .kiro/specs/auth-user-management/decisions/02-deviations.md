@@ -63,7 +63,11 @@
 
 ---
 
-## Proposed deviations from the 2026-07-13 deep review (OPEN — need user approval before editing requirements.md)
+## Deep-review deviations confirmed and enacted (2026-07-13)
+
+> DV-006…DV-008 preserve the original proposal context and wording, but all three were approved
+> and enacted in `requirements.md` and the cited design sections. Their current Status is Active
+> (CONFIRMED); no requirement-level OPEN deviation remains.
 
 ### DV-006: Change AC-1.2 — uniform 401 for unknown user (remove the username-enumeration oracle)
 - Date: 2026-07-13

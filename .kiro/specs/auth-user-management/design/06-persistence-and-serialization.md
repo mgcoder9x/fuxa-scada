@@ -196,17 +196,30 @@ roles    = Array.isArray(parsed.roles) ? parsed.roles : []
 metadata = parsed without its own 'roles' key      // the remainder (shallow key omission)
 
 // WRITE (User_Record.{ roles, metadata })  →  row.info: string
-infoObject = Object.assign({}, metadata, { roles })   // 'roles' is authoritative
+infoObject = { ...metadata, roles }                   // spread (define-semantics, D-026); 'roles' authoritative
 row.info   = serialize(infoObject)                    // JSON string persisted verbatim
 ```
 
 **Reserved key `roles`.** The top-level `roles` key of `info` is **reserved** for role storage.
 `metadata` is defined as the info object with its `roles` key omitted, and on write `roles` is
-re-attached authoritatively (`Object.assign({}, metadata, { roles })`). Consequently a metadata
-object must not carry its own top-level `roles` key — if it did, the stored role list would
-shadow it. This is a documented invariant of the mapping (and a **generator constraint** for
-P-003 / P-005, [§9](#9-testing-notes)). `metadata` may freely contain a `roles` key at any
-*nested* depth; only the top level is reserved.
+re-attached authoritatively. Consequently a metadata object must not carry its own top-level
+`roles` key — if it did, the stored role list would shadow it. This is a documented invariant of
+the mapping (and a **generator constraint** for P-003 / P-005, [§9](#9-testing-notes)). `metadata`
+may freely contain a `roles` key at any *nested* depth; only the top level is reserved.
+
+**Reserved/stripped key `__proto__` (D-026, prototype-pollution hardening — fixes N-029).** The key
+`__proto__` is **reserved at every depth** and is **stripped by `deserialize`** ([§4](#4-serialization-design-ac-133--ac-134)),
+so it is never surfaced in `roles` or `metadata`. Rationale: `JSON.parse` creates `__proto__` as an
+own, enumerable data property (parse itself is pollution-safe), but any consumer that rebuilds the
+object with `[[Set]]` semantics (`Object.assign`, `obj[k]=v`) triggers `Object.prototype`'s
+`__proto__` **accessor** — silently dropping a primitive value or, for an object value, reassigning
+the target's prototype. `__proto__` is therefore not legitimate stored metadata; stripping it at the
+single translation seam makes the round-trip well-defined for both adapters and neutralizes a hostile
+or FUXA-written row. To eliminate the `[[Set]]` hazard entirely, the compose/split steps use
+object-spread (define-semantics: `{ ...metadata, roles }` / `{ ...info }` minus `roles`) rather than
+`Object.assign`. `constructor`/`prototype` are ordinary data keys under `[[Set]]` (no accessor) and
+are **not** stripped — they round-trip as normal metadata. `__proto__` is thus a generator exclusion
+for P-003 / P-005 alongside `roles` ([§4.2](#42-what-round-trips-and-the-json-safe-domain-p-005), [§9](#9-testing-notes)).
 
 ### 3.3 Field-by-field mapping
 
@@ -263,6 +276,8 @@ ParseResult =
   // JSON.parse wrapped so a malformed string yields a DESCRIPTIVE failure result rather than
   // throwing. 'detail' carries the parser message; 'raw' is the offending string (never a
   // secret — info/value rows carry no password). null/empty input deserializes to {} (ok).
+  // On success the parsed value is passed through stripProtoKeys (D-026): any own `__proto__` key
+  // is removed at every depth (prototype-pollution hardening, §3.2). Only `__proto__` is stripped.
 ```
 
 **Why JSON (verified alignment).** FUXA already persists `info` and role `value` as JSON
@@ -288,6 +303,14 @@ represent `undefined` (dropped), functions (dropped), `NaN`/`±Infinity` (become
 metadata domain** and from the P-003/P-005 generators ([§9](#9-testing-notes)); a metadata
 object is defined to be JSON-safe by construction. This keeps P-005 a true identity rather than
 a partial one.
+
+**Reserved key `__proto__` (D-026).** In addition to the JSON asymmetries above, the key
+`__proto__` is **stripped by `deserialize`** at every depth as prototype-pollution hardening (see
+[§3.2](#32-the-splitcompose-rule-info--roles--metadata)). It is therefore also a generator
+exclusion for P-003/P-005 — a value carrying a `__proto__` key is outside the round-trip domain by
+design (the strip is the intended, verifiable behavior, pinned by dedicated tests in
+[§9.2](#92-example--edge-tests-ac-134-resilient-parse)). `constructor`/`prototype` are **not**
+stripped and remain ordinary in-domain metadata keys.
 
 ### 4.3 Resilient batch read (AC-13.4)
 
@@ -624,7 +647,9 @@ property id.
   all occur. **Excludes** `undefined`, functions, `NaN`, `±Infinity`, `-0`, and `Date`
   (documented non-JSON-safe values, [§4.2](#42-what-round-trips-and-the-json-safe-domain-p-005)).
 - `metadataArb` = `jsonSafeValue` restricted to an **object root** with the top-level `roles`
-  key **omitted** (the reserved-key invariant, [§3.2](#32-the-splitcompose-rule-info--roles--metadata)).
+  key **omitted** (the reserved-key invariant, [§3.2](#32-the-splitcompose-rule-info--roles--metadata))
+  and the `__proto__` key **omitted at every depth** (D-026: `__proto__` is stripped by `deserialize`,
+  so it is outside the round-trip domain; `constructor`/`prototype` remain in-domain).
 - `rolesArb` = `fc.array(fc.string())` (role-id strings; allow empty and duplicates to exercise
   set semantics).
 - `userRecordArb` = `fc.record({ username: fc.fullUnicodeString({ minLength: 1 }), fullname:

@@ -66,6 +66,14 @@ class FuxaAuthDb {
         this._db = null;
         /** @type {Promise<void>|null} */
         this._openPromise = null;
+        // In-process transaction serializer (N-032). A single sqlite3 connection cannot hold two
+        // overlapping transactions — a second `BEGIN IMMEDIATE` while one is open throws
+        // "cannot start a transaction within a transaction". Node's async interleaving lets two
+        // `transaction()` calls overlap, so we chain them through this promise gate: each waits for
+        // the previous to COMMIT/ROLLBACK before it BEGINs. `BEGIN IMMEDIATE` still serializes writers
+        // across other connections (e.g. FUXA's own), so intra- + inter-process serialization hold.
+        /** @type {Promise<void>} */
+        this._txQueue = Promise.resolve();
     }
 
     /**
@@ -165,16 +173,29 @@ class FuxaAuthDb {
      * @param {(db: FuxaAuthDb) => Promise<T>} fn
      * @returns {Promise<T>}
      */
-    async transaction(fn) {
-        await this.exec('BEGIN IMMEDIATE;');
-        try {
-            const result = await fn(this);
-            await this.exec('COMMIT;');
-            return result;
-        } catch (e) {
-            try { await this.exec('ROLLBACK;'); } catch (_rollbackErr) { /* surface the original */ }
-            throw e;
-        }
+    transaction(fn) {
+        // Serialize on the in-process queue (N-032): the next transaction cannot BEGIN until the
+        // previous one has COMMITted/ROLLed BACK, so a single connection never holds two overlapping
+        // transactions. The gate is released in `finally` regardless of success/failure so one
+        // failing transaction cannot deadlock the queue.
+        const prior = this._txQueue;
+        let release;
+        this._txQueue = new Promise((res) => { release = res; });
+        const run = async () => {
+            await this.exec('BEGIN IMMEDIATE;');
+            try {
+                const result = await fn(this);
+                await this.exec('COMMIT;');
+                return result;
+            } catch (e) {
+                try { await this.exec('ROLLBACK;'); } catch (_rollbackErr) { /* surface the original */ }
+                throw e;
+            } finally {
+                release();
+            }
+        };
+        // Wait for the prior transaction to settle (either outcome) before starting this one.
+        return prior.then(run, run);
     }
 
     /**
