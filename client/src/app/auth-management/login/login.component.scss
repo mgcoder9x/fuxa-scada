@@ -1,0 +1,39 @@
+/* Minimal Login_Page styling (design/07 §2). Layout/theme integration is out of REQ-11 scope. */
+.auth-login {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 320px;
+    margin: 0 auto;
+}
+
+.auth-login__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.auth-login__label {
+    font-weight: 600;
+}
+
+.auth-login__input {
+    padding: 8px;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.auth-login__error {
+    min-height: 1.2em;
+    color: #b00020;
+}
+
+.auth-login__submit {
+    padding: 8px 16px;
+    cursor: pointer;
+}
+
+.auth-login__submit[disabled] {
+    cursor: not-allowed;
+    opacity: 0.6;
+}

@@ -1,0 +1,90 @@
+<!--
+  User-Management page container template (design/08 §2.3/§6/§9 · REQ-12, AC-12.1/AC-12.6).
+  Task 17.1: access gate (checking | denied | granted) + read-only user list (username / full name /
+  roles). Create/edit forms (17.2) + delete (17.3) are wired later.
+  Accessibility (§9): table semantics + caption; role="alert" aria-live error region; aria-busy while loading.
+  Security (§9): renders only the hash-free UserView; error region shows a translated KEY, never server text.
+-->
+<section class="auth-users" [attr.aria-busy]="loading">
+
+    <!-- AC-12.6 gate while resolving access -->
+    <div class="auth-users__checking" *ngIf="access === 'checking'">
+        {{ 'msg.loading' | translate }}
+    </div>
+
+    <!-- AC-12.6 denied: authorization error, NO user data shown -->
+    <div class="auth-users__denied" role="alert" aria-live="assertive" *ngIf="access === 'denied'">
+        {{ (errorKey || 'msg.signin-unauthorized') | translate }}
+    </div>
+
+    <!-- AC-12.1 granted: the user list -->
+    <ng-container *ngIf="access === 'granted'">
+
+        <header class="auth-users__header">
+            <h1 class="auth-users__title">{{ 'users.title' | translate }}</h1>
+            <span class="auth-users__actions-top">
+                <button class="auth-users__create" type="button" (click)="openCreate()">
+                    {{ 'users.add-title' | translate }}
+                </button>
+                <button class="auth-users__refresh" type="button" (click)="refresh()" [disabled]="loading">
+                    {{ 'general.refresh' | translate }}
+                </button>
+            </span>
+        </header>
+
+        <!-- Create/Edit form host (AC-12.2/12.3): shown in place of the list actions when open -->
+        <app-auth-user-form *ngIf="formMode"
+            [mode]="formMode"
+            [initial]="formInitial"
+            [existingUsernames]="existingUsernames()"
+            [roleOptions]="roles"
+            (saved)="onFormSaved($event)"
+            (cancelled)="closeForm()">
+        </app-auth-user-form>
+
+        <!-- Delete confirmation (AC-12.5) -->
+        <app-auth-delete-user-confirm
+            [username]="deleteTarget"
+            [pending]="deletePending"
+            (confirmed)="onDeleteConfirmed($event)"
+            (cancelled)="onDeleteCancelled()">
+        </app-auth-delete-user-confirm>
+
+        <!-- non-blocking error surface for a failed list load (non-auth) -->
+        <div class="auth-users__error" role="alert" aria-live="assertive" *ngIf="errorKey">
+            {{ errorKey | translate }}
+        </div>
+
+        <div class="auth-users__loading" *ngIf="loading">{{ 'msg.loading' | translate }}</div>
+
+        <table class="auth-users__table" *ngIf="!loading">
+            <caption class="auth-users__caption">{{ 'users.title' | translate }}</caption>
+            <thead>
+                <tr>
+                    <th scope="col">{{ 'users.username' | translate }}</th>
+                    <th scope="col">{{ 'users.fullname' | translate }}</th>
+                    <th scope="col">{{ 'users.roles' | translate }}</th>
+                    <th scope="col">{{ 'general.actions' | translate }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr *ngFor="let user of users; trackBy: trackByUsername">
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.fullname }}</td>
+                    <td>{{ roleLabel(user) }}</td>
+                    <td class="auth-users__row-actions">
+                        <button type="button" [attr.aria-label]="('users.edit-title' | translate) + ' ' + user.username"
+                                (click)="openEdit(user)">{{ 'general.edit' | translate }}</button>
+                        <button type="button" [attr.aria-label]="('general.remove' | translate) + ' ' + user.username"
+                                (click)="openDelete(user)">{{ 'general.remove' | translate }}</button>
+                    </td>
+                </tr>
+                <tr *ngIf="users.length === 0">
+                    <td colspan="4" class="auth-users__empty">{{ 'msg.no-data' | translate }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+    </ng-container>
+
+</section>

@@ -1,0 +1,47 @@
+/* User-Management page container styles (design/08 §2). Minimal, theme-agnostic; the module owns
+   no bespoke design system — layout only, so it inherits the app theme. */
+.auth-users {
+    display: block;
+    padding: 16px;
+}
+
+.auth-users__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.auth-users__title {
+    font-size: 18px;
+    margin: 0;
+}
+
+.auth-users__denied,
+.auth-users__error {
+    color: #b00020;
+    margin: 8px 0;
+}
+
+.auth-users__table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.auth-users__table th,
+.auth-users__table td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.auth-users__caption {
+    text-align: left;
+    font-weight: 600;
+    padding: 8px 0;
+}
+
+.auth-users__empty {
+    text-align: center;
+    opacity: 0.7;
+}

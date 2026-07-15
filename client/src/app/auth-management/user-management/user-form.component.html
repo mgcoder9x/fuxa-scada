@@ -1,0 +1,92 @@
+<!--
+  Create/Edit user form (design/08 §3/§4 · REQ-12, AC-12.2/12.3/12.4).
+  Validation + submit gating come from the pure presenter (DV-010): [disabled]="!presenter.canSubmit()",
+  field errors from presenter.usernameError()/passwordError(). Username immutable on edit; password
+  optional on edit (empty → omitted → hash retained, AC-7.3).
+  Accessibility (§9): labeled controls, aria-invalid/aria-describedby, role="alert" error region, aria-busy.
+  Security (§9): password masked + never logged; error region renders a translated KEY, never server text.
+-->
+<form class="auth-user-form" (ngSubmit)="onSubmit()" [attr.aria-busy]="presenter.pending" *ngIf="presenter">
+
+    <h2 class="auth-user-form__title">
+        {{ (presenter.isEdit() ? 'users.edit-title' : 'users.add-title') | translate }}
+    </h2>
+
+    <!-- Username: editable on create, immutable on edit -->
+    <div class="auth-user-form__field">
+        <label class="auth-user-form__label" for="auf-username">{{ 'users.username' | translate }}</label>
+        <input id="auf-username"
+               class="auth-user-form__input"
+               type="text"
+               name="username"
+               autocomplete="off"
+               [(ngModel)]="presenter.username"
+               [readonly]="presenter.isEdit()"
+               [attr.aria-invalid]="!!presenter.usernameError()"
+               [attr.aria-describedby]="presenter.usernameError() ? 'auf-username-err' : null" />
+        <div id="auf-username-err" class="auth-user-form__field-error" role="alert" *ngIf="presenter.usernameError()">
+            {{ presenter.usernameError() | translate }}
+        </div>
+    </div>
+
+    <!-- Full name (optional) -->
+    <div class="auth-user-form__field">
+        <label class="auth-user-form__label" for="auf-fullname">{{ 'users.fullname' | translate }}</label>
+        <input id="auf-fullname"
+               class="auth-user-form__input"
+               type="text"
+               name="fullname"
+               autocomplete="off"
+               [(ngModel)]="presenter.fullname" />
+    </div>
+
+    <!-- Password: required on create, optional on edit (blank = keep existing) -->
+    <div class="auth-user-form__field">
+        <label class="auth-user-form__label" for="auf-password">
+            {{ 'users.password' | translate }}
+            <span class="auth-user-form__hint" *ngIf="presenter.isEdit()">
+                ({{ 'users.password-keep-hint' | translate }})
+            </span>
+        </label>
+        <input id="auf-password"
+               class="auth-user-form__input"
+               type="password"
+               name="password"
+               autocomplete="new-password"
+               [(ngModel)]="presenter.password"
+               [attr.aria-invalid]="!!presenter.passwordError()"
+               [attr.aria-describedby]="presenter.passwordError() ? 'auf-password-err' : null" />
+        <div id="auf-password-err" class="auth-user-form__field-error" role="alert" *ngIf="presenter.passwordError()">
+            {{ presenter.passwordError() | translate }}
+        </div>
+    </div>
+
+    <!-- Roles (multi-select via checkboxes) -->
+    <fieldset class="auth-user-form__roles">
+        <legend>{{ 'users.roles' | translate }}</legend>
+        <label class="auth-user-form__role" *ngFor="let role of roleOptions">
+            <input type="checkbox"
+                   [checked]="isRoleSelected(role.id)"
+                   (change)="toggleRole(role.id, $any($event.target).checked)" />
+            {{ role.name }}
+        </label>
+    </fieldset>
+
+    <!-- Server/submit error (AC-12.4) — generic translated key, never server text -->
+    <div class="auth-user-form__error" role="alert" aria-live="assertive" *ngIf="presenter.errorKey">
+        {{ presenter.errorKey | translate }}
+    </div>
+
+    <div class="auth-user-form__actions">
+        <button type="button" class="auth-user-form__cancel" (click)="onCancel()">
+            {{ 'general.cancel' | translate }}
+        </button>
+        <button type="submit"
+                class="auth-user-form__submit"
+                [disabled]="!presenter.canSubmit()"
+                [attr.aria-busy]="presenter.pending">
+            {{ 'general.save' | translate }}
+        </button>
+    </div>
+
+</form>

@@ -201,7 +201,11 @@ try {
             settings.swaggerEnabled = mysettings.swaggerEnabled;
         }
         if (mysettings.nodeRedEnabled === true && utils.isNullOrUndefined(mysettings.nodeRedAuthMode)) {
-            settings.nodeRedAuthMode = 'legacy-open';
+            // Fail-secure (D-041/TO-015): when Node-RED is enabled without an explicit auth mode,
+            // default to 'secure' (auth required), matching the POST /api/settings path. Node-RED
+            // is an arbitrary-code-execution surface, so an unspecified mode must NOT silently open
+            // it unauthenticated. 'legacy-open' remains available only as an explicit opt-in.
+            settings.nodeRedAuthMode = 'secure';
         }
     }
 } catch (err) {
@@ -530,6 +534,25 @@ function startFuxa() {
 
             if (settings.disableServer !== false) {
                 app.use('/', FUXA.httpApi);
+
+                // SPA fallback (D-040, fixes N-052): serve the Angular index.html for any GET
+                // client-route that is NOT an API call, an integration path, or a static asset,
+                // so a browser refresh / deep link on routes such as /alarms, /notifications,
+                // /reports, /scripts, /logs, /apikeys, /userRoles, /events, … does not return 404.
+                // Registered LAST (after the API + static mounts, before listen) so it never
+                // shadows a real route. Previously the only SPA catch-all lived inside
+                // mountNodeRedIfInstalled(), so when Node-RED was not mounted there was no fallback
+                // for client routes missing from the hardcoded express.static list above.
+                app.get('*', function (req, res, next) {
+                    if (req.path.indexOf('.') !== -1 ||
+                        req.path.startsWith('/api/') ||
+                        req.path.startsWith('/api-docs') ||
+                        req.path.startsWith('/nodered') ||
+                        req.path.startsWith('/dashboard')) {
+                        return next();
+                    }
+                    res.sendFile(path.join(settings.httpStatic, 'index.html'));
+                });
             }
 
             server.listen(settings.uiPort, settings.uiHost, function () {

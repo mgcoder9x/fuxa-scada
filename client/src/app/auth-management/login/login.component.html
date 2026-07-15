@@ -1,0 +1,48 @@
+<!--
+  Login_Page template (design/07 §2.1/§8 · REQ-11, AC-11.1..11.5).
+  AC-11.1: username input, password input, submit control (+ non-interactive error region).
+  AC-11.4: role="alert" aria-live="assertive" region shows the translated generic errorKey only when set.
+  AC-11.5: submit disabled while !canSubmit(); aria-busy reflects pending.
+  Accessibility (§8): labeled controls, initial focus on username, submit on Enter, credential autocomplete.
+  Security (§8): no server text rendered — the error region renders a translated i18n KEY only.
+-->
+<form class="auth-login" [formGroup]="loginForm" (ngSubmit)="onSubmit()" [attr.aria-busy]="pending">
+
+    <div class="auth-login__field">
+        <label class="auth-login__label" for="auth-login-username">
+            {{ 'signin.username' | translate }}
+        </label>
+        <input id="auth-login-username"
+               class="auth-login__input"
+               type="text"
+               formControlName="username"
+               autocomplete="username"
+               autofocus
+               [attr.aria-invalid]="loginForm.controls.username.touched && loginForm.controls.username.invalid" />
+    </div>
+
+    <div class="auth-login__field">
+        <label class="auth-login__label" for="auth-login-password">
+            {{ 'signin.password' | translate }}
+        </label>
+        <input id="auth-login-password"
+               class="auth-login__input"
+               type="password"
+               formControlName="password"
+               autocomplete="current-password"
+               [attr.aria-invalid]="loginForm.controls.password.touched && loginForm.controls.password.invalid" />
+    </div>
+
+    <!-- AC-11.4 error surface: populated only on error; empty otherwise. Renders a translated KEY. -->
+    <div class="auth-login__error" role="alert" aria-live="assertive">
+        <span *ngIf="errorKey">{{ errorKey | translate }}</span>
+    </div>
+
+    <button class="auth-login__submit"
+            type="submit"
+            [disabled]="!canSubmit()"
+            [attr.aria-busy]="pending">
+        {{ 'signin.submit' | translate }}
+    </button>
+
+</form>
