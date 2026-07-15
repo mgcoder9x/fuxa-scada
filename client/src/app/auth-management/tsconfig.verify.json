@@ -1,0 +1,28 @@
+// Isolated type-check config for the auth-management CLIENT shells (Task 15, D-011/D-036).
+//
+// WHY this exists: the full app does NOT compile against its own committed deps (N-044, upstream
+// FUXA dep drift), so `ng build` / the app tsconfig cannot validate our shells. This config
+// type-checks ONLY the module-owned `clients/**` sources (excluding specs, which jest/ts-jest owns)
+// against the installed Angular 18 + rxjs types, in isolation from the broken FUXA graph. It must
+// report 0 errors: run `npx tsc -p src/app/auth-management/tsconfig.verify.json`.
+{
+    "extends": "../../../tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "skipLibCheck": true,
+        // Mirror the app's ACTUAL build options (root tsconfig is non-strict): this config verifies
+        // the shells exactly as `ng build` would type-check them. `strict` is deliberately NOT set —
+        // enabling it surfaces a pre-existing strictNullChecks violation in the FUXA-core
+        // `_helpers/endpointapi.ts` (`url: string = null`) which we must not edit (D-003) and which
+        // is not part of our module. Our own shells are additionally compiled under `strict:true` by
+        // ts-jest when their specs run (jest.config.js), so strict coverage of module code is kept.
+        "types": [],
+        "moduleResolution": "node"
+    },
+    "include": [
+        "clients/**/*.ts"
+    ],
+    "exclude": [
+        "clients/**/*.spec.ts"
+    ]
+}

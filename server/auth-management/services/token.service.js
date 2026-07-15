@@ -338,6 +338,53 @@ class TokenService {
         if (!this.refreshStore) return 0;
         return this.refreshStore.revokeFamily(familyId);
     }
+
+    /**
+     * Sign-in refresh issuance helper (§02 §6.1, Task 13.2). Mints a refresh token for a fresh family
+     * and returns everything the `Refresh_Token_Store.insert` needs — including the token's own `iat`/
+     * `exp` — so the API router can persist + set the cookie WITHOUT importing `jsonwebtoken` (keeps
+     * all JWT/decoding inside the Token layer, D-003). `parent_jti` is null (a family root).
+     * @param {{ username: string, tokenVersion?: number }} identity
+     * @returns {{ token: string, jti: string, familyId: string, issuedAt: number|undefined, expiresAt: number|undefined }}
+     */
+    issueRefreshForSignIn(identity) {
+        const minted = this.issueRefreshToken(identity);
+        const claims = this.adapter.decode(minted.token) || {};
+        return {
+            token: minted.token,
+            jti: minted.jti,
+            familyId: minted.familyId,
+            issuedAt: claims.iat,
+            expiresAt: claims.exp,
+        };
+    }
+
+    /**
+     * Sign-out family revocation (§02 §6.3 / AC-3.4, Task 13.2). Verifies the presented refresh token
+     * (signature/expiry + `type==='refresh'`) and, if legitimate, revokes its whole server-side family
+     * so sign-out invalidates the token, not merely the browser cookie (D-019). Verification (not bare
+     * decode) prevents a forged/foreign token from revoking an arbitrary family. Best-effort: returns 0
+     * on any invalid/expired token (the cookie is cleared by the router regardless).
+     * @param {string|null} token the presented refresh-token string
+     * @returns {Promise<number>} rows revoked
+     */
+    async revokeRefreshByToken(token) {
+        if (!token || !this.refreshStore) return 0;
+        /** @type {any} */
+        const options = { algorithms: [this._algorithm()] };
+        if (this.settings.jwtIssuer) options.issuer = this.settings.jwtIssuer;
+        if (this.settings.jwtAudience) options.audience = this.settings.jwtAudience;
+        let decoded;
+        try {
+            decoded = this.adapter.verify(token, options);
+        } catch (_e) {
+            return 0; // expired/forged → nothing to revoke here; the token is already unusable
+        }
+        if (!decoded || decoded.type !== 'refresh' || !decoded.family_id) {
+            return 0;
+        }
+        return this.refreshStore.revokeFamily(decoded.family_id);
+    }
 }
 
 module.exports = { TokenService, randomId, DEFAULT_ACCESS_TTL_SECONDS, DEFAULT_ALGORITHM };

@@ -228,6 +228,68 @@ class FuxaUserStoreAdapter {
     }
 
     /**
+     * ATOMIC last-administrator-guarded delete (AC-8.3/AC-8.5, D-020/D-033, closes the N-016 TOCTOU).
+     * The existence check, admin classification of the target, the remaining-admin count, and the
+     * conditional row removal all run inside ONE `BEGIN IMMEDIATE` transaction on this adapter's own
+     * connection. `BEGIN IMMEDIATE` takes SQLite's write lock, so two concurrent last-admin deletes
+     * are serialized: the second transaction observes the first's committed delete, recounts, and
+     * refuses to remove the now-last administrator (P-016). No mutation occurs on
+     * `unknown_user`/`last_admin`. The best-effort `usersMap` cache eviction happens AFTER COMMIT and
+     * only when a row was actually deleted.
+     *
+     * The admin-determination predicate is INJECTED (`isAdministratorFn`, §05) so this adapter gains
+     * no RBAC knowledge. For a legacy group-code admin (`groups` ∈ {-1,255}) the §05 predicate decides
+     * without any role lookup; when it does read roles, those reads run on this same connection and
+     * therefore observe the transaction's consistent snapshot.
+     *
+     * @param {string} username
+     * @param {(record: any) => Promise<boolean>} isAdministratorFn
+     * @returns {Promise<{ kind: 'deleted' } | { kind: 'unknown_user' } | { kind: 'last_admin' }>}
+     */
+    async deleteGuarded(username, isAdministratorFn) {
+        const classify = typeof isAdministratorFn === 'function' ? isAdministratorFn : async () => false;
+        /** @type {{ kind: 'deleted' } | { kind: 'unknown_user' } | { kind: 'last_admin' }} */
+        let outcome = { kind: 'unknown_user' };
+        await this.db.transaction(async (db) => {
+            const rows = await db.all(
+                'SELECT ' + USER_COLUMNS + ' FROM users WHERE username = ?', [username]);
+            if (!rows || rows.length === 0) {
+                outcome = { kind: 'unknown_user' };
+                return; // no mutation
+            }
+            const parsed = deserialize(rows[0].info);
+            const target = this._compose(rows[0], parsed.ok ? parsed.value : {});
+
+            if (await classify(target)) {
+                // Target is an administrator — is there ANOTHER administrator left? One is enough.
+                const all = await db.all('SELECT ' + USER_COLUMNS + ' FROM users');
+                let anotherAdminExists = false;
+                for (const r of all) {
+                    if (r.username === username) continue;
+                    const pr = deserialize(r.info);
+                    const rec = this._compose(r, pr.ok ? pr.value : {});
+                    if (await classify(rec)) { anotherAdminExists = true; break; }
+                }
+                if (!anotherAdminExists) {
+                    outcome = { kind: 'last_admin' };
+                    return; // no mutation — the last administrator is protected (AC-8.5)
+                }
+            }
+            await db.run('DELETE FROM users WHERE username = ?', [username]);
+            outcome = { kind: 'deleted' };
+        });
+        // Best-effort cache eviction AFTER commit, only when a row was removed (AC-8.2).
+        if (outcome.kind === 'deleted' && this.runtimeUsers && typeof this.runtimeUsers.removeUsers === 'function') {
+            try {
+                await this.runtimeUsers.removeUsers(username);
+            } catch (_e) {
+                // best-effort; the row is already deleted from the DB.
+            }
+        }
+        return outcome;
+    }
+
+    /**
      * Best-effort in-memory `usersMap` cache refresh via FUXA's pwd-falsy `setUsers` branch (§5.2
      * step 2). Never throws: the DB row is already committed and authority reads from the store.
      * @param {string} username

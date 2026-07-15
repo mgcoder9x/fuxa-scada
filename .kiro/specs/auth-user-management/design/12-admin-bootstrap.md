@@ -169,13 +169,20 @@ Bootstrap runs **once at startup** (composition root) and decides whether to see
 
 ```
 runBootstrap():
-  admins = User_Store.list().filter(isAdministrator)        // §05 §5.3 predicate
+  { records } = User_Store.readAll()                        // canonical store read (DEF-B2: the store
+  admins = records.filter(isAdministrator)                  //   method is readAll(); list() is §04's service verb)
   if admins.length == 0:
       seedDefaultAdministrator()                            // AC-17.1  (§3.2)
   else:
       // AC-17.4 — retain, create no default
-      remediateKnownDefaultAdmins(admins)                   // §8 (security, recommended)
+      remediateKnownDefaultAdmins(admins)                   // §8 (security, MANDATORY — DEF-B1)
 ```
+
+> **Store method name (DEF-B2, reconciled 2026-07-14).** This section's prose elsewhere writes
+> `User_Store.list()`, but the canonical `User_Store` interface method is **`readAll()`** (returns
+> `{ records, errors }`); `list()` is the **`User_Service`** verb (§04 §2.2). Bootstrap reads through
+> `User_Store.readAll()` and classifies `records`. Substance unchanged — same content-based
+> empty-admin check.
 
 - **`isAdministrator` is §05's predicate, not a new one.** An account counts as an administrator
   when its resolved permissions cover `ADMIN_PERMISSION_SET` **or** its FUXA `groups` code is an
@@ -436,27 +443,33 @@ administrator, [§5](#5-idempotent-bootstrap--retain-existing-ac-174) creates no
 **without** a remediation step the known-default credential would silently survive, defeating REQ-17
 for exactly the installs most likely to be exposed.
 
-**Recommended remediation (flagged for the Tasks phase; do not silently leave the default).** On the
+**Mandatory remediation (D-013(1); the re-hash is security-NECESSARY — DEF-B1/N-038).** On the
 retain-existing branch, `remediateKnownDefaultAdmins(admins)`:
 
 1. **Detect a known-default admin.** For each administrator that has **no completed-rotation
    marker** (`metadata.mustRotate` is absent/unset — the FUXA-seeded record has no `info` at all),
    test whether its stored hash verifies the literal `'123456'` via `Password_Hasher.verify('123456',
    storedHash)` (the well-known FUXA default, N-007).
-2. **Force rotation.** For any account that matches, set `metadata.mustRotate = true` (and,
-   recommended, re-hash the stored credential to a fresh random one-time secret enrolled once via the
-   **secure enrollment channel** in [§3.2](#32-the-seed-credential-eliminating-n-007) — never the app
-   log/console, **D-022**), via `User_Store.update`. This arms the gate so
-   the legacy admin can do nothing but rotate — converting a migrated install into the same secure
-   resting state as a fresh seed.
+2. **Force rotation AND re-hash to a fresh unknown secret.** For any account that matches, set
+   `metadata.mustRotate = true` **and re-hash the stored credential to a fresh CSPRNG one-time secret
+   delivered once via the secure enrollment channel** ([§3.2](#32-the-seed-credential-eliminating-n-007) —
+   never the app log/console, **D-022**), via `User_Store.update`.
+   > **Why the re-hash is NECESSARY, not optional (DEF-B1, corrected 2026-07-14).** Setting only
+   > `mustRotate=true` while LEAVING the known `'123456'` hash reproduces the exact **hostile-rotation
+   > takeover** [§3.2](#32-the-seed-credential-eliminating-n-007) argues must be closed: an attacker who
+   > knows `'123456'` can still **sign in** (sign-in is not a gated protected operation) and, though the
+   > gate limits them to `account.rotatePassword`, **rotate the password themselves** and seize the sole
+   > admin. So for the *migration* case exactly as for the *seed* case, the credential MUST become an
+   > unknown random secret; the gate alone is insufficient. The `'123456'`-yields-no-usable-authority
+   > guarantee of [§10.3](#103-security-test-no-usable-known-default-survives) is only true WITH the
+   > re-hash. This corrects §8's earlier "recommended" wording to **necessary**.
 3. **Do not create a new admin.** AC-17.4 is preserved: no default is created; only the existing
-   record's gate flag (and optionally its hash) is updated.
+   record's gate flag and its hash are updated.
 
-This behavior is **recommended and flagged for confirmation at Tasks** (it changes an existing
-account's login on upgrade, an operational decision), rather than asserted as silent mandatory
-behavior. What is **not** optional is the requirement it serves: the module must never allow a
-usable known-default credential to persist (D-005/TO-005 verification clauses), verified by the
-security test in [§10.3](#103-security-test-no-usable-known-default-survives).
+This remediation is **mandatory** (D-013(1)); it changes a known-default account's login on upgrade
+(an operational effect, flagged for operators), but leaving the known default is not an option
+because the module must never allow a usable known-default credential to persist (D-005/TO-005
+verification clauses), verified by the security test in [§10.3](#103-security-test-no-usable-known-default-survives).
 
 ---
 

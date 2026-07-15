@@ -67,13 +67,14 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - Replace the two-connection scheme: the adapter writes ALL columns (non-secret + verbatim password hash) in ONE `BEGIN…COMMIT` transaction on its **own** sqlite connection (still bypassing `setUser` re-hash), then calls `setUsers(password omitted)` as a best-effort idempotent `usersMap` cache refresh outside the transaction; a crash can never leave a row with a stale/NULL password (§06 §5.2/§5.3/§5.4)
     - _Requirements: 13.1, 4.2, 7.3_
     - _DONE 2026-07-13: `store/fuxa-auth-db.js` `transaction()` = `BEGIN IMMEDIATE…COMMIT`; `FuxaUserStoreAdapter.create/update` writes the full row (verbatim hash) in one txn + best-effort `_refreshCache` via `setUsers(pwd-omitted)`; double-hash regression + retain-on-omit tests green_
-  - [ ] 2.9 Implement atomic create + last-admin concurrency serialization (D-020, fixes N-016)
+  - [x] 2.9 Implement atomic create + last-admin concurrency serialization (D-020, fixes N-016)
     - `create` uses a plain `INSERT` so a duplicate username is rejected atomically by the primary-key conflict (no read-then-write TOCTOU, AC-5.2/AC-9.5); the last-admin guard delete runs inside a `BEGIN IMMEDIATE` transaction so two concurrent last-admin deletes cannot both pass the count check (§04 §3.2/§6.5, §06 §5.4)
     - _Requirements: 5.2, 8.5, 9.5, 13.1_
-    - _PARTIAL 2026-07-13: the **atomic create** half is DONE — `FuxaUserStoreAdapter.create` / `FuxaRoleStoreAdapter.create` use plain `INSERT` → `DuplicateKeyError` (code `duplicate_key`), tested for both users (AC-5.2) and roles (AC-9.5) with no-mutation assertions. The **last-admin `BEGIN IMMEDIATE` guard** is deferred to Task 9 (`User_Service.delete` is the transaction site); `FuxaAuthDb.transaction()` provides the `BEGIN IMMEDIATE` primitive it will use. P-016 (2.10) tested there._
-  - [ ]* 2.10 Write property test for concurrency invariants
+    - _DONE: (create half) 2026-07-13 — `FuxaUserStoreAdapter.create` / `FuxaRoleStoreAdapter.create` use plain `INSERT` → `DuplicateKeyError` (`duplicate_key`), tested for users (AC-5.2) + roles (AC-9.5) with no-mutation assertions. **(last-admin guard half) 2026-07-14 (N-037/D-033)** — realized as the ATOMIC `FuxaUserStoreAdapter.deleteGuarded(username, isAdministratorFn)` (one `BEGIN IMMEDIATE` txn on the adapter's connection; the §05 predicate injected by `User_Service`; DEF-U1 reconciliation of "who runs the txn"). Verified in `user.service.test.js` (P-016 @100 + last-admin single/non-last)._
+  - [x]* 2.10 Write property test for concurrency invariants
     - **Property 16: Under any interleaving, admin count never reaches zero and concurrent same-username creates yield exactly one record**
     - **Validates: D-020, N-016, AC-8.5, AC-5.2** — (P-016; owner §04, mechanism §06); model interleaved create/delete histories; min 100 iters
+    - _DONE 2026-07-14 (N-037): `user.service.test.js` **Property 16 @100** — concurrent `delete` of ALL administrators serializes through `deleteGuarded`'s `BEGIN IMMEDIATE` critical section → exactly one `last_admin` refusal, the rest deleted, `adminCount()` always ≥1 (never zero). The concurrent-same-username-create half is covered by the atomic plain-INSERT (`store-adapters.test.js` duplicate-reject) + `user.service.test.js` atomic-`duplicate_key` mapping._
 
 - [x] 3. Password_Hasher and the bcrypt seam (§03)
   - [x] 3.1 Implement the `BcryptHasherAdapter` (Hash seam)
@@ -163,35 +164,45 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - Seeded user signs in → 200 token that `Token_Service.verify` accepts; wrong password → 401 no token; unknown username → the **same generic 401** (identical status+body) no token (DV-006) (real service→store/hasher/token, no mocks)
     - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 8. RBAC — Role_Service and Authorization_Service (§05)
-  - [ ] 8.1 Implement `Role_Service`
+- [x] 8. RBAC — Role_Service and Authorization_Service (§05)
+  <!-- DONE 2026-07-14 (N-036): §05 SERVICE LAYER complete (REQ-9 + REQ-10 + REQ-17 gate half + §5.3 predicate). Two design defects reconciled at the root BEFORE/AT code: DEF-R1 (§05 §9 now formally homes Property 13) and DEF-R2 (VERIFIED — the bootstrap gate returned 403 for the seeded admin's account.rotatePassword, an N-013-class deadlock; §05 §4.2/§6/§8.4 + code fixed to state the gate's ALLOW half per the normative P-009 §12 §9). The API-layer authorization MIDDLEWARE (token verify → live-record load/shape-map → resolveIdentity → isAllowed) + router mount are Task 13; see N-036 for the getUserCache-shape integration flag. Full auth-management suite: 107 passing, stable. -->
+  - [x] 8.1 Implement `Role_Service`
     - Create `services/role.service.js`: `create`/`list`/`update`/`delete` outcomes; canonical id = `role.id`; duplicate-id rejected without mutation (AC-9.5); update replaces permission set wholesale (AC-9.3); delete prunes ids from every referencing user via the adapter (AC-9.4); emit audit
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
-  - [ ] 8.2 Implement `Authorization_Service` and the admin-determination predicate
+    - _DONE 2026-07-14: `services/role.service.js` — closed outcomes + audit; AC-9.5 realized via the store's ATOMIC plain-INSERT create (D-024 → `duplicate_key`), TOCTOU-free, existing role unmodified; `prunedUsers` from an accurate pre-delete `User_Store.readAll` scan, prune delegated to `Role_Store.delete` (N-036)._
+  - [x] 8.2 Implement `Authorization_Service` and the admin-determination predicate
     - Create `services/authorization.service.js`: `isAllowed(identity, operation) → Decision`; ordered procedure (unauthenticated→401, `mustRotate` bootstrap gate→403 except `account.rotatePassword`, permission-set membership→allow/403), fail-closed default deny; `effective(identity)` = union of role perms + `groupCodeAdmin` (255/-1); single-owner `isAdministrator(subject)` predicate consumed by §04 and §12; pure function (no clock/random)
     - **Live session authority (D-015, fixes N-011):** `Identity` is built from the **live** `User_Record` (roles/groups/existence/`mustRotate` from the store, NOT the token claims), and a `tokenVersion` check denies tokens minted before a logout/password-change/role-change/disable (§05 §4.1); token `roles`/`groups` are compat-only
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 17.2_
-  - [ ]* 8.3 Write property test: authorization decisions are deterministic
+    - _DONE 2026-07-14: `services/authorization.service.js` — pure over injected `Role_Store.get`; `resolveIdentity(claims, record)` (D-032) live-authority + D-027 absent→0 `tokenVersion` revocation; `isAllowed` ordered/total, **bootstrap gate ALLOWS `account.rotatePassword` under `mustRotate` (DEF-R2 root fix, membership bypassed) and denies everything else 403**; `isAdministrator` predicate. No clock/random/HTTP (N-036)._
+  - [x]* 8.3 Write property test: authorization decisions are deterministic
     - **Property 6: Authorization decisions are deterministic**
     - **Validates: Requirements 10.5** — (P-006; owner §05); same identity+operation, unchanged roles/perms ⇒ same decision; min 100 iters
-  - [ ]* 8.4 Write property test: role deletion prunes all references
+    - _DONE 2026-07-14: `authorization.service.test.js` Property 6 @200 iters — generators span all four branches (allow / 403 / 401 / bootstrap-gated); asserts `decision1` deep-equals `decision2` and each decision is a member of the closed Decision set._
+  - [x]* 8.4 Write property test: role deletion prunes all references
     - **Property 11: After role deletion, no surviving user references a deleted role id and no deleted role remains**
     - **Validates: Requirements 9.4** — (P-011; owner §05); min 100 iters
-  - [ ]* 8.5 Write unit tests for role CRUD and authorization decisions
+    - _DONE 2026-07-14: `role.service.test.js` Property 11 @120 iters — real in-memory sqlite through both adapters; asserts (1) every deleted role gone from the store, (2) no surviving user references a deleted id, (3) `prunedUsers` = exactly the referencing users._
+  - [x]* 8.5 Write unit tests for role CRUD and authorization decisions
     - Duplicate-role reject; wholesale permission replace; 401 unauthenticated vs 403 unpermitted; admin-role/group-code (`255`/`-1`) allows user.*/role.*; unknown permission → deny
     - _Requirements: 9.1, 9.2, 9.3, 9.5, 10.1, 10.2, 10.3, 10.4_
-  - [ ]* 8.6 Write property test for live session authority + active revocation
+    - _DONE 2026-07-14: `role.service.test.js` (create/dup/shape-guard/list/update-wholesale/unknown/delete-prune) + `authorization.service.test.js` (401 vs 403, allow-on-grant, AC-10.4 role + 255/-1 compat, fail-closed unknown perm, dangling role, **AC-17.2 bootstrap gate incl. the DEF-R2 allow-rotate regression**, AC-17.3 regain, `isAdministrator`)._
+  - [x]* 8.6 Write property test for live session authority + active revocation
     - **Property 13: A deleted/downgraded account, or a token below the account's current `tokenVersion`, is denied on the next protected request; the live account (not token claims) governs the decision**
     - **Validates: D-015, N-011** — (P-013; owner §05); min 100 iters
+    - _DONE 2026-07-14: `authorization.service.test.js` Property 13 @200 iters over `resolveIdentity(claims, record)` (D-032) — absent/disabled/version-below ⇒ `authenticated:false`; otherwise carries the LIVE record's roles/groups/mustRotate (token claims ignored). Deterministic anchors added for each branch._
 
-- [ ] 9. User_Service — CRUD (§04)
-  - [ ] 9.1 Implement `User_Service`
+- [x] 9. User_Service — CRUD (§04)
+  <!-- DONE 2026-07-14 (N-037): §04 SERVICE LAYER complete (REQ-5/6/7/8 + AC-4.6/4.7 policy + atomic last-admin guard). Two design defects reconciled at the root BEFORE/AT code: DEF-U1 (the atomic last-admin guard is the store-adapter method User_Store.deleteGuarded(username, isAdministratorFn) — one BEGIN IMMEDIATE txn; the service injects the §05 predicate — closing the N-016 TOCTOU and the deferred Task 2.9 guard + Task 2.10 P-016) and DEF-U2 (CreateOutcome §2.2 was missing the invalid/validation_error variant §2.3/§8.1 require). The router (users.router.js) + authorization middleware + outcome→HTTP mapping are Task 13; see N-037 for the composition-root shared-connection flag. Full auth-management suite: 127 passing, stable. -->
+  - [x] 9.1 Implement `User_Service`
     - Create `services/user.service.js`: `create` (validate→duplicate check without mutation→hash→persist), `list`/`get` (UserView, no hash, empty≠error), `update` (existence check→validate→hash-or-retain→apply fullname/roles/metadata, no write on failure), `delete` (existence check→**last-admin guard using §05 predicate**→remove+cache evict); emit audit on create/update/delete
     - **Password policy enforcement (D-017/DV-007):** the create/update validation step rejects a password whose UTF-8 length exceeds bcrypt's 72-byte bound (AC-4.6) and enforces the min-length + common-password blocklist policy (AC-4.7) before hashing (§04 §2.3)
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3, 6.4, 7.1, 7.2, 7.3, 7.4, 7.5, 8.1, 8.2, 8.3, 8.5, 4.6, 4.7_
-  - [ ]* 9.2 Write unit tests for CRUD outcomes
+    - _DONE 2026-07-14: `services/user.service.js` — pure over injected seams (no SQL/clock/HTTP, AC-16.3); hashing upstream (AC-5.4/7.2), hash-free `UserView` (AC-6.2), retain-on-omit (AC-7.3). **Password policy (D-034):** `settings.auth.passwordMinLength` (default 12 code-points) + `passwordBlocklist` (case-insensitive, built-in default); order = required → malformed-UTF-16 (D-025) → >72 bytes (AC-4.6) → min (AC-4.7) → blocklist (AC-4.7), all → `validation_error` no-hash/no-write. **DEF-U2:** create gained the `invalid` outcome. **DEF-U1/D-033:** delete delegates to the ATOMIC `User_Store.deleteGuarded(username, isAdministratorFn)` (§05 predicate injected)._
+  - [x]* 9.2 Write unit tests for CRUD outcomes
     - Create duplicate/missing-field; list excludes hash; get empty for missing; update retain-hash-on-omit and no-mutation-on-failure and missing→error; delete missing→error, cache eviction, and **last-admin refused with no mutation** (AC-8.5); **password >72 UTF-8 bytes rejected (AC-4.6) and min-length/blocklist policy enforced (AC-4.7)**
     - _Requirements: 5.1, 5.2, 5.3, 6.1, 6.2, 6.4, 7.3, 7.4, 7.5, 8.3, 8.5, 4.6, 4.7_
+    - _DONE 2026-07-14: `user.service.test.js` — **20 passing**: (A) example/edge with doubles (AC-5.1..5.4 incl. hash-only + trim, AC-5.2 fast-path + atomic PK, AC-5.3, DEF-U2 policy set, configurable policy, AC-6.1/6.2, AC-6.3/6.4, AC-7.1/7.2/7.3, AC-7.4/7.5 + password-policy-on-update, INV-1, AC-8.1/8.2/8.3/8.5 mapping, ctor guard); (B) real-sqlite/bcrypt integration (create→get single-hash verify, retain-hash end-to-end, last-admin single/non-last, plain-user delete) + **Property 16 @100** (concurrent deletes of all admins → exactly one survives, ≥1-admin invariant, D-020/D-033)._
 
 - [ ] 10. Checkpoint — service layer complete
   - Ensure all tests pass, ask the user if questions arise.
@@ -213,48 +224,62 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - _Requirements: 14.1, 14.5_
     - _DONE 2026-07-13: same `audit-logger.test.js` exercises dedicated `fuxa-audit.log` separation, health degradation on write failure, richer secret-free fields, hash-chain linkage, and startup fallback; included in the fresh Task 4 baseline._
 
-- [ ] 12. Administrator bootstrap, rotation, and migration (§12)
-  - [ ] 12.1 Implement the startup bootstrap routine
+- [x] 12. Administrator bootstrap, rotation, and migration (§12)
+  <!-- DONE 2026-07-14 (N-038): §12 SERVICE LAYER complete (REQ-17.1..17.5). Two design defects reconciled at the root BEFORE/AT code: DEF-B1 (the migration re-hash of a known-default '123456' admin is security-NECESSARY, not "recommended" — a gate alone leaves the §3.2 hostile-rotation takeover) and DEF-B2 (User_Store.list()→readAll() naming). Enrollment ambiguity resolved by D-035. Password policy made single-source (password-policy.js, anti-drift; shared with §04). The HTTP surface — POST /api/account/rotate-password (13.7), runBootstrap at the composition root (13.5), and the operator enrollment glue (console collector / token redemption) — is Task 13/14. Full auth-management suite: 142 passing, stable. -->
+  - [x] 12.1 Implement the startup bootstrap routine
     - Create `services/bootstrap.js` `runBootstrap(deps)`: content-based empty-admin check via `isAdministrator` (§05); when none, seed **exactly one** admin with a CSPRNG one-time secret (never `'123456'`, cost 12), `groups=-1`, `metadata.mustRotate=true`, hash written verbatim via the adapter; emit `bootstrap.seed` audit (AC-17.5); idempotent + retain-existing on non-empty (AC-17.4)
     - _Requirements: 17.1, 17.4, 17.5_
-  - [ ] 12.7 Implement the secure enrollment channel for the seed/rotated secret (D-022, fixes N-018)
+    - _DONE 2026-07-14: `services/bootstrap.js` `Bootstrap`/`runBootstrap` — `readAll`+§05 classify (DEF-B2 reconcile); seed via `userStore.create` (verbatim hash, groups -1, mustRotate true) + `bootstrap.seed` audit; idempotent (gated seed admin skipped on re-run)._
+  - [x] 12.7 Implement the secure enrollment channel for the seed/rotated secret (D-022, fixes N-018)
     - The initial/rotated secret is delivered via a dedicated secure channel and is **never** written to `fuxa.log`/`runtime.logger`/console: (default) an interactive first-run CLI enrollment collaborator that sets the initial secret at a controlled console; (automated provisioning) a one-time enrollment token — short TTL, hashed-at-rest, single-use (invalidated on redemption or expiry) — surfaced once to an operator-only channel and redeemed to set the real secret (§12 §3.2)
     - _Requirements: 17.1_
-  - [ ] 12.2 Implement the `account.rotatePassword` operation (the gate exception)
+    - _DONE 2026-07-14 (D-035): `services/enrollment.js` — `OneTimeEnrollmentTokenStore` (SHA-256 hashed-at-rest, TTL, single-use `redeem`) + `TokenEnrollmentChannel` (surfaces only the token to an injected operator sink, never the secret). Bootstrap delivers the one-time secret ONLY via the injected `enrollmentChannel.deliver` (never logged/returned). The interactive-console collector + the HTTP token-redemption endpoint are composition/API glue (Task 13/14)._
+  - [x] 12.2 Implement the `account.rotatePassword` operation (the gate exception)
     - Create `services/account.service.js` `rotatePassword(identity, req)`: verify current secret via `Password_Hasher`, reject reuse/weak new secret, re-hash + persist verbatim, then clear `metadata.mustRotate=false` (AC-17.3); audited as `user.update`; the sole operation permitted while gated
     - _Requirements: 17.2, 17.3_
-  - [ ] 12.3 Implement mandatory migration remediation of a known-default admin
+    - _DONE 2026-07-14: `services/account.service.js` — `bad_current` (verify mismatch, gate NOT cleared) / `invalid_new` (reuse or shared-policy failure) / `rotated` (re-hash + clear mustRotate + **bump tokenVersion** D-015/D-027 + audit `user.update`)._
+  - [x] 12.3 Implement mandatory migration remediation of a known-default admin
     - In the retain-existing branch, `remediateKnownDefaultAdmins`: for each admin lacking a rotation marker whose stored hash verifies `'123456'`, set `metadata.mustRotate=true` (and re-hash to a fresh one-time secret) via `User_Store.update`; create no new admin (D-013(1), mandatory)
     - _Requirements: 17.2, 17.4_
-  - [ ]* 12.4 Write property test: a seeded admin cannot act before rotation
+    - _DONE 2026-07-14 (DEF-B1): re-hash to a fresh CSPRNG secret is NECESSARY (not "recommended") — a gate alone leaves `'123456'` usable for a hostile self-rotation takeover; `bootstrap.js` re-hashes + arms the gate + bumps tokenVersion + delivers the fresh secret via the enrollment channel; audited as `user.update`. §8 corrected._
+  - [x]* 12.4 Write property test: a seeded admin cannot act before rotation
     - **Property 9: A seeded admin cannot act before password rotation**
     - **Validates: Requirements 17.2, 17.3** — (P-009; owner §12); every protected op denied pre-rotation (even held admin perms), allowed after; min 100 iters
-  - [ ]* 12.5 Write property test: at least one administrator always remains
+    - _DONE 2026-07-14: `account.service.test.js` Property 9 @200 — over real `Authorization_Service.isAllowed`: a `mustRotate` seeded admin (`groups:-1`) is denied every op except `account.rotatePassword`; after clearing, admin perms regained._
+  - [x]* 12.5 Write property test: at least one administrator always remains
     - **Property 10: For any sequence of deletions on a store starting with ≥1 admin, ≥1 admin always remains**
     - **Validates: Requirements 8.5, 17.1** — (P-010; jointly owned §04 + §12); drive `User_Service.delete` sequences against the last-admin guard; min 100 iters
-  - [ ]* 12.6 Write unit/integration tests for bootstrap and migration
+    - _DONE 2026-07-14: `bootstrap.test.js` Property 10 @100 — base case seeded by `runBootstrap` (AC-17.1); random `User_Service.delete` sequences against the last-admin guard (AC-8.5); after every delete `adminCount() ≥ 1`._
+  - [x]* 12.6 Write unit/integration tests for bootstrap and migration
     - Seed-once + idempotent restart (AC-17.1/17.4); `bootstrap.seed` audited (AC-17.5); seeded/legacy `'123456'` yields no usable authority pre-rotation and the module seed never verifies `'123456'`; migration flips `mustRotate` on a detected known-default admin; **no code path writes the seed/rotated plaintext (or a redeemable token) to `runtime.logger`/console; the enrollment token is single-use + TTL-bounded (D-022, §12 §10.4)**
     - _Requirements: 17.1, 17.4, 17.5, 17.2_
+    - _DONE 2026-07-14: `bootstrap.test.js` — seed-once + idempotent, retain-existing, AC-17.5 audit, DEF-B1 migration (`'123456'` no longer verifies), §10.3 no-usable-known-default after seed+migration, §10.4 secret-free audit trail, enrollment token single-use/TTL/hashed-at-rest + token-only channel._
 
 - [ ] 13. API layer — routers, authorization middleware, and mount
-  - [ ] 13.1 Implement the authorization middleware seam
+  - [x] 13.1 Implement the authorization middleware seam
     - Create `api/authorization.middleware.js`: verify token (identity/session reference only) then build `Identity` from the **live `User_Record`** (roles/groups/existence/`mustRotate` from the store, D-015) and check `tokenVersion` for active revocation; call `Authorization_Service.isAllowed`, short-circuit 401/403, never touch the store directly beyond the identity read; fail fast if the service is unavailable
     - _Requirements: 10.2, 10.3, 16.3, 16.4_
-  - [ ] 13.2 Implement the authentication router
+    - _DONE 2026-07-14 (N-039): `api/authorization.middleware.js` — token from `x-access-token`/Bearer → `Token_Service.verify` → **`User_Store.get`** live record (D-032/N-036 flag #1) → `resolveIdentity` (D-015/D-027) → `isAllowed` → 401/403 or `req.authIdentity`+next; dependency throw ⇒ **503** fail-fast (AC-16.4). Verified over real HTTP incl. deleted-account + tokenVersion revocation._
+  - [x] 13.2 Implement the authentication router
     - Create `api/authentication.router.js`: `POST /api/signin` (up-front field-presence 400, outcome→HTTP per §01 §4), `POST /api/refresh`, `POST /api/signout` (204); delegate to services only
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 3.2, 3.3, 3.4, 16.3_
-  - [ ] 13.3 Implement the users router (CRUD backend for REQ-12)
+    - _DONE 2026-07-14 (N-040): `api/authentication.router.js` — signin §01 §4 mapping (success/missing_field/DV-006 byte-identical 401/429) + refresh §02 §6.3 (disabled 204 / rotated 200+cookie / reject 401+clear / reuse-revoke) + signout AC-3.4 (server-side family revoke + 204). Delegates to services only (no bcrypt/jwt import); +2 additive Token_Service helpers (`issueRefreshForSignIn`, `revokeRefreshByToken`) keep JWT in the Token layer. Verified over real HTTP (`api.authentication.test.js`, 9 passing incl. RFC 9700 reuse + signout family-revoke)._
+  - [x] 13.3 Implement the users router (CRUD backend for REQ-12)
     - Create `api/users.router.js`: guarded CRUD endpoints requiring `user.create`/`user.read`/`user.update`/`user.delete`; outcome→HTTP per §04 §8.2 (incl. `duplicate_username`, `last_admin`, `user_not_found`)
     - _Requirements: 5.1, 5.2, 5.3, 6.1, 7.1, 7.4, 8.1, 8.3, 8.5, 16.3_
-  - [ ] 13.4 Implement the roles router
+    - _DONE 2026-07-14 (N-039): `api/users.router.js` — full §04 §8.2 mapping incl. the DEF-U2 `invalid`→400 row; verified over real HTTP (`api.routers.test.js`)._
+  - [x] 13.4 Implement the roles router
     - Create `api/roles.router.js`: guarded role endpoints requiring `role.*`; outcome→HTTP per §05
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 16.3_
-  - [ ] 13.5 Implement the composition root and the SUPERSEDE cutover (D-014, fixes N-014)
+    - _DONE 2026-07-14 (N-039): `api/roles.router.js` — full §05 §8.1 mapping (duplicate_role/role_not_found/validation_error); role.* guarding verified over real HTTP._
+- [ ] 13.5 Implement the composition root and the SUPERSEDE cutover (D-014, fixes N-014)
     - Create `server/auth-management/index.js`: instantiate adapters → services (inject Password_Hasher, Token_Service, brute-force, Audit_Logger, Refresh_Token_Store, stores), run `runBootstrap` at startup, and export the mounted router; in the FUXA API bootstrap, **stop mounting** FUXA's `usersApi`/`authApi` for the overlapping paths (`/api/signin`, `/api/refresh`, `/api/signout`, `/api/users`, `/api/roles`) and mount the module router (after `authLimiter`) so the module is the **sole** authority for those URLs — not shadowed by a residual FUXA handler; keep the touch within the D-003 wiring boundary; client cutover (D-011) lands together
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 17.1_
-  - [ ] 13.7 Implement the account-rotation router (D-018, fixes N-013)
+    - _PARTIAL 2026-07-14 (N-041): **composition-root FACTORY DONE** — `server/auth-management/index.js` `createAuthManagementModule(deps)` assembles adapters→services→routers + runs `runBootstrap` + exports the mounted `router`; verified end-to-end (`composition-root.test.js`, 4 passing: seed→gated→rotate→full-admin lifecycle over real HTTP + idempotent retain + enrollment-required). **REMAINING (part 3b): the single FUXA-core `server/api/index.js` SUPERSEDE edit + client cutover (D-011)** — held for a coordinated, user-confirmed commit because editing `api/index.js` without the client change breaks the running built client on the `{roles}` vs `{groups,info}` signin payload (D-014 "land together")._
+  - [x] 13.7 Implement the account-rotation router (D-018, fixes N-013)
     - Create `api/account.router.js` exposing `POST /api/account/rotate-password`, wired in the composition root (instantiating `Account_Service`, task 12.2); it is the sole operation reachable while `mustRotate` is true, so a seeded/migrated admin can become usable; on success bump `tokenVersion` (D-015)
     - _Requirements: 17.2, 17.3, 16.3_
+    - _DONE 2026-07-14 (N-039): `api/account.router.js` — `POST /api/account/rotate-password` guarded by `account.rotatePassword`; rotated/bad_current/invalid_new mapping; verified over real HTTP — a gated admin reaches it, pre-rotation token revoked after success (tokenVersion), gate cleared (AC-17.3). The composition-root mount is Task 13.5._
   - [ ]* 13.6 Write API integration tests
     - End-to-end auth + CRUD + role endpoints incl. 401/403 gate, `last_admin`, and fail-fast (AC-16.4) when a service is unavailable
     - _Requirements: 16.3, 16.4, 10.2, 10.3, 8.5_
@@ -269,15 +294,18 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
   - [x] 15.1 Reuse and extend the client session plumbing
     - Under `client/src/app/auth-management/`, reuse (unchanged) the `sessionStorage`/`window.fuxaAccessToken` token store, the `x-access-token` `AuthInterceptor`, and `AuthGuard`; add a `user.read` permission-aware check for the management route (D-011); adapt storage to the first-class `roles` field (D-007), not `info.roles`
     - _Requirements: 11.3, 12.6_
-  - [ ] 15.2 Implement `AuthSignInClient`
+  - [x] 15.2 Implement `AuthSignInClient`
     - Create the module-owned Angular service issuing `POST /api/signin` via `EndPointApi.getURL()`, resolving `{ token, username, fullname, roles }`, normalizing errors to stable ids (`invalid_credentials`/`too_many_attempts`/`missing_field`/`unexpected_error` — note: unknown-user is folded into `invalid_credentials`, no `user_not_found` at sign-in per DV-006); uses `Skip-Error` so 401 does not trigger global sign-out
     - _Requirements: 11.2, 11.4_
-  - [ ] 15.3 Implement `UserAdminClient` and `RoleAdminClient`
+    - _DONE 2026-07-15 (N-045): `client/src/app/auth-management/clients/auth-signin.client.ts` — thin `@Injectable({providedIn:'root'})` shell over the framework-free `auth-protocol` core; `POST /api/signin` with `Content-Type` + `Skip-Error` (verified against `_helpers/auth-interceptor.ts` — Skip-Error deletes the header and bypasses the global 401/403 sign-out), `map(mapSignInSuccess)`/`catchError(→ normalizeSignInError)` so it emits `SignInResult` / errors a stable `SignInError` (never the raw response). Base URL via `EndPointApi.getURL()`. Type-checked by `tsconfig.verify.json` (0 errors) + wiring-tested in `auth-clients.spec.ts` (jest/ts-jest, D-036)._
+  - [x] 15.3 Implement `UserAdminClient` and `RoleAdminClient`
     - Create module-owned Angular services for `GET/POST/PUT/DELETE /api/users` and `GET /api/roles`, mapping `UserView[]`/`RoleOption[]` and normalizing errors (`duplicate_username`/`validation_error`/`user_not_found`/`last_admin`/`forbidden`/`unauthorized_error`); consume first-class `roles`, never parse `info`
     - _Requirements: 12.1, 12.2, 12.3, 12.5_
-  - [ ]* 15.4 Write unit tests for the client HTTP services
+    - _DONE 2026-07-15 (N-045): `client/src/app/auth-management/clients/{user-admin,role-admin}.client.ts` — thin `@Injectable` shells over the pure core. UserAdminClient: list/get/create/update/delete `/api/users` mapping via `mapUsersResponse`/`mapUserResponse`/`mapUserView` (hash-free UserView, empty single→null per AC-6.4), `:username` URL-encoded, whitelisted body fields matching `users.router.js`. RoleAdminClient: list/create/update(PUT `{permissions}`)/delete `/api/roles` via `mapRolesResponse`, id-based (§05 §3.1), delete returns `{removed,prunedUsers}`. Both normalize every non-2xx to a stable `AdminError` via `normalizeAdminError`; `Skip-Error` keeps a 403 an in-page error (not a forced sign-out). Type-checked (0 errors) + wiring-tested._
+  - [x]* 15.4 Write unit tests for the client HTTP services
     - `HttpClientTestingModule` request shape + success mapping + error-id normalization for sign-in and user/role clients
     - _Requirements: 11.2, 11.4, 12.2, 12.3_
+    - _DONE 2026-07-15 (N-045, DV-009): headless jest/ts-jest (no browser). `auth-protocol.spec.ts` (10) exercises the pure mapping/normalization core; `auth-clients.spec.ts` (12) exercises the shell WIRING (exact URL/method, `Skip-Error` header, success-mapping delegation, and stable-error normalization on every HTTP failure) by direct-instantiation with a stub `HttpClient`. **DV-009 test-mechanism deviation:** `HttpClientTestingModule` (TestBed/karma/browser) is NOT usable here — it compiles the whole broken FUXA app (N-044) and needs a browser; direct instantiation over the pure core is the equivalent verification headlessly (D-036). Full jest suite: **2 suites, 22 tests, exit 0** (green on two runs). `tsc -p tsconfig.verify.json` = 0 errors against Angular 18._
 
 - [ ] 16. Login_Page UI — supersede (§07)
   - [ ] 16.1 Implement the routed `Login_Page` component

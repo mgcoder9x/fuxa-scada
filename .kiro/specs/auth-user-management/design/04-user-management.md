@@ -159,6 +159,7 @@ CreateOutcome =
   | { kind: 'created',        user: UserView }                              // AC-5.1
   | { kind: 'missing_field',  error: 'missing_field',      field: 'username' }  // AC-5.3
   | { kind: 'duplicate',      error: 'duplicate_username', username: string }   // AC-5.2
+  | { kind: 'invalid',        error: 'validation_error',   detail: string }     // §2.3 policy (AC-4.6/4.7) + omitted/blank password (§8.1); DEF-U2/N-037
 
 list(): ListOutcome
 ListOutcome =
@@ -442,6 +443,15 @@ violation cannot mutate any record:
 4. **Audit + return.** Record the delete via `Audit_Logger` (AC-14.2) and return
    `{ kind:'deleted' }`.
 
+> **Reconciliation (D-033/N-037).** Steps 1–3 (existence check → last-admin guard → remove + cache
+> evict) are **not** run as separate service-level `await`s (that is the N-016 TOCTOU). They execute
+> **atomically inside `User_Store.deleteGuarded(username, isAdministratorFn)`** — the adapter's single
+> `BEGIN IMMEDIATE` critical section (see [§6.5](#65-last-administrator-determination-ac-85)). The
+> `User_Service.delete` therefore reduces to: normalize `username` → call `deleteGuarded` with the §05
+> `isAdministrator` predicate → map the returned `{ deleted | unknown_user | last_admin }` to the
+> outcome/HTTP shape → audit on success (step 4). No service-level pre-check is authoritative; the
+> transaction is the single source of truth (mirrors the create pattern, [§3.2](#32-duplicate-detection-without-mutation-ac-52--atomic-at-the-db-d-020-fixes-n-016)).
+
 ### 6.2 Permission-cache eviction (AC-8.2) — verified FUXA anchor
 
 FUXA maintains an in-memory permission cache named **`usersMap`** (a `Map`) in
@@ -513,6 +523,20 @@ and correctly refuses to remove the now-last admin. Because SQLite's lock is a *
 holds across connections and processes (unlike an in-process async mutex). The invariant "≥1 admin
 always remains" is thus enforced at the persistence layer, quantified over interleavings by the new
 concurrency property **P-016** (not merely the sequential P-010).
+
+> **Atomic critical section = `User_Store.deleteGuarded` (D-033/N-037, reconciles DEF-U1).** The
+> existence check + last-admin guard + row removal + cache eviction are realized as a **single
+> store-adapter method** `User_Store.deleteGuarded(username, isAdministratorFn)` that runs the
+> **whole** existence→classify→count→conditional-delete critical section inside one `BEGIN IMMEDIATE`
+> transaction on the adapter's own connection, returning a closed outcome
+> `{ kind:'deleted' | 'unknown_user' | 'last_admin' }`. The `User_Service` **triggers** it and passes
+> the §05 admin-determination predicate as a **pure injected callback** (`isAdministratorFn(record) →
+> Promise<boolean>`); the service performs NO SQL/transaction itself (AC-16.3) and the adapter gains
+> NO RBAC knowledge (the classifier is injected — single-owner discipline, §05). This makes §6.5's
+> "on the adapter's own connection" literal and reconciles the imprecise Task-2.9 phrasing
+> ("User_Service.delete is the transaction site"): the service is the *trigger*, the adapter is the
+> *transaction site*. The `User_Store` interface gains `deleteGuarded` accordingly; the plain
+> `delete(username)` remains for non-guarded removals (e.g. internal/test paths).
 
 > **Multi-node note.** `BEGIN IMMEDIATE` on a shared SQLite file serializes writers correctly for a
 > single-file deployment. A true multi-node/HA deployment with separate stores must escalate to
@@ -597,6 +621,7 @@ table (see [`../design.md`](../design.md#error-handling)); it must not diverge f
 | create | `created` | AC-5.1 | **200** | `{ status:'success', data: UserView }` |
 | create | `missing_field` | AC-5.3 | **400** | `{ error:'missing_field', field:'username', message }` |
 | create | `duplicate` | AC-5.2 | **400** | `{ error:'duplicate_username', message }` |
+| create | `invalid` | AC-4.6/4.7, §8.1 | **400** | `{ error:'validation_error', message }` (password policy / omitted-blank password; DEF-U2) |
 | list | `ok` | AC-6.1, AC-6.2 | **200** | `{ status:'success', data: UserView[] }` (no hash) |
 | get | `found` | AC-6.3 | **200** | `{ status:'success', data: UserView }` |
 | get | `empty` | AC-6.4 | **200** | `{ status:'success', data: null }` (empty result, not an error) |

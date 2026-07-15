@@ -45,11 +45,27 @@ class User_Store {
   async update(username, patch) { throw new Error('not_implemented:User_Store.update'); }
 
   /**
-   * Remove a user (row + in-memory permission-cache eviction, AC-8.2).
+   * Remove a user (row + in-memory permission-cache eviction, AC-8.2). Unconditional — the caller
+   * is responsible for any guard. Prefer {@link deleteGuarded} for the admin-protected delete path.
    * @param {string} username
    * @returns {Promise<void>}
    */
   async delete(username) { throw new Error('not_implemented:User_Store.delete'); }
+
+  /**
+   * ATOMIC last-administrator-guarded delete (AC-8.3/AC-8.5, D-020/D-033, closes the N-016 TOCTOU).
+   * Runs the WHOLE existence-check → admin-classify → remaining-admin-count → conditional row
+   * removal + cache eviction critical section inside ONE `BEGIN IMMEDIATE` transaction on the
+   * adapter's own connection, so two concurrent last-admin deletes are serialized and can never both
+   * reach a zero-admin state (P-016). The admin-determination predicate is INJECTED by the caller as
+   * a pure async callback (`isAdministratorFn(record) → Promise<boolean>`, owned by §05) so this seam
+   * gains no RBAC knowledge (single-owner discipline). Returns a closed outcome; makes NO mutation on
+   * `unknown_user`/`last_admin`.
+   * @param {string} username
+   * @param {(record: any) => Promise<boolean>} isAdministratorFn classifies a User_Record as an administrator (§05)
+   * @returns {Promise<{ kind: 'deleted' } | { kind: 'unknown_user' } | { kind: 'last_admin' }>}
+   */
+  async deleteGuarded(username, isAdministratorFn) { throw new Error('not_implemented:User_Store.deleteGuarded'); }
 }
 
 module.exports = { User_Store };

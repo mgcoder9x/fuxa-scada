@@ -101,3 +101,19 @@
 - Rationale: NIST SP 800-63B recommends rate-limiting/adaptive delays over hard account locks precisely to avoid attacker-induced lockout of valid users; shared state is required for correct throttling under horizontal scaling.
 - Impact / Risk: Changes AC-15.2 semantics and P-012's reference state machine; edits REQ-15 + its property/tests.
 - Verification: an updated P-012 covering adaptive delay + a multi-instance test that the effective threshold is not multiplied by node count.
+
+
+---
+
+## Task-phase deviations (implementation)
+
+### DV-009: Client HTTP-client tests use headless direct-instantiation, NOT `HttpClientTestingModule`
+- Date: 2026-07-15
+- Phase: Implementation (Task 15.4)
+- Status: Active (CONFIRMED by necessity — verified blocker, N-044)
+- Links: Task 15.4, D-036, N-043, N-044, REQ-11, REQ-12
+- Context: Task 15.4 literally says to verify the client HTTP services with Angular's `HttpClientTestingModule` (i.e. `TestBed` + the Angular test harness). That harness requires the Angular compiler/runtime and a browser-like environment, and — critically — `TestBed` compiles the reachable module graph, which includes the **broken** FUXA app modules (N-044: `app.module`/gridster/charts/ngx-translate dep drift, 27 pre-existing src errors that are out of auth scope and un-editable under D-003).
+- Statement: The client clients are instead verified **headlessly** with jest/ts-jest: (1) `auth-protocol.spec.ts` unit-tests the framework-free pure core (mapping + stable error normalization), and (2) `auth-clients.spec.ts` tests the thin `@Injectable` shells by **direct instantiation** with a stub `HttpClient` object (plain get/post/put/delete returning rxjs observables), asserting the exact URL/method, the `Skip-Error` opt-out header, success-mapping delegation, and stable-error normalization on every HTTP failure. `@angular/core`, `@angular/common/http`, and FUXA-core `EndPointApi` are mapped to tiny runtime stubs (jest `moduleNameMapper`) so no browser/Angular runtime and no broken FUXA graph are pulled in; ts-jest still type-checks the shells against the REAL Angular declarations, and a separate `tsc -p tsconfig.verify.json` type-checks them against Angular 18 (0 errors).
+- Rationale: This is the SAME verification content the task intends (request shape + success mapping + error-id normalization) achieved with a mechanism that actually runs in this environment. The pure-core + thin-shell split makes direct instantiation strictly equivalent to a `TestBed`-mocked `HttpClient` for the logic under test, while avoiding a dependency on code the module does not own and cannot fix. Root-cause honest: the deviation exists because of the verified upstream build regression (N-044), not a shortcut.
+- Impact / Risk: When the FUXA platform dep drift is remediated (the separate Option A track), a `TestBed`/`HttpClientTestingModule` layer MAY be added on top for the eventual Login/User-Management **components** (Tasks 16/17), which do need DOM/TestBed. The client *clients* remain fully verified by the headless suite regardless. No production code depends on the stubs (they live only under `auth-management/testing/`, used solely by jest via `moduleNameMapper`).
+- Verification: `npx jest` → 2 suites / 22 tests, exit 0 (green on two consecutive runs); `npx tsc -p src/app/auth-management/tsconfig.verify.json` → 0 errors.
