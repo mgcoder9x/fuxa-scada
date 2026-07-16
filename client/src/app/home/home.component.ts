@@ -303,8 +303,8 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
                 data: {},
                 disableClose: true,
                 autoFocus: false,
-                ...(this.hmi.layout.loginoverlaycolor && this.hmi.layout.loginoverlaycolor !== LoginOverlayColorType.none) && {
-                    backdropClass: this.hmi.layout.loginoverlaycolor === LoginOverlayColorType.black ? 'backdrop-black' : 'backdrop-white'
+                ...(this.hmi.layout?.loginoverlaycolor && this.hmi.layout?.loginoverlaycolor !== LoginOverlayColorType.none) && {
+                    backdropClass: this.hmi.layout?.loginoverlaycolor === LoginOverlayColorType.black ? 'backdrop-black' : 'backdrop-white'
                 }
             };
 
@@ -434,7 +434,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         }
         this.isLoading = false;
         this.securityEnabled = this.projectService.isSecurityEnabled();
-        if (this.securityEnabled && !this.isLoggedIn() && this.hmi.layout.loginonstart) {
+        if (this.securityEnabled && !this.isLoggedIn() && this.hmi.layout?.loginonstart) {
             this.onLogin();
         }
     }

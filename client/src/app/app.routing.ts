@@ -23,6 +23,9 @@ import { ApiKeysListComponent } from './apikeys/api-keys-list/api-keys-list.comp
 import { PluginsListComponent } from './plugins/plugins-list/plugins-list.component';
 import { ArMarkerListComponent } from './ar/ar-marker-list/ar-marker-list.component';
 import { ArViewComponent } from './ar/ar-view/ar-view.component';
+// auth-management module standalone pages (Task 17.4 additive routing — see below)
+import { LoginComponent } from './auth-management/login/login.component';
+import { UserManagementComponent } from './auth-management/user-management/user-management.component';
 
 const appRoutes: Routes = [
     { path: '', component: HomeComponent},//, canActivate: [AuthGuard] },
@@ -49,6 +52,14 @@ const appRoutes: Routes = [
     { path: 'plugins', component: PluginsListComponent, canActivate: [AuthGuard] },
     { path: 'arMarkers', component: ArMarkerListComponent, canActivate: [AuthGuard] },
     { path: 'ar', component: ArViewComponent },
+
+    // auth-management module (Task 17.4 — ADDITIVE, non-destructive step): expose the module-owned
+    // standalone Login + User-Management pages under a distinct `auth/*` namespace so they are
+    // reachable/testable in a real browser WITHOUT removing FUXA's own /login dialog or /users route
+    // (the destructive SUPERSEDE cutover — retiring FUXA auth, api/index.js, AuthGuard redirect,
+    // enabling security — remains a separate, confirmed step). Lazy `loadComponent` (standalone).
+    { path: 'auth/login', component: LoginComponent },
+    { path: 'auth/users', component: UserManagementComponent },
 
     // otherwise redirect to home
     { path: '**', redirectTo: '' }
