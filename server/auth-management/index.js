@@ -108,7 +108,7 @@ async function createAuthManagementModule(deps = {}) {
     });
     const bruteForceGuard = new BruteForceGuard(auth.bruteForce || {});
     const authorization = new AuthorizationService({ roleStore });
-    const authenticationService = new AuthenticationService({ userStore, passwordHasher, tokenService, bruteForceGuard, auditLogger });
+    const authenticationService = new AuthenticationService({ userStore, passwordHasher, tokenService, bruteForceGuard, auditLogger, authorization });
     const userService = new UserService({ userStore, passwordHasher, authorization, auditLogger, settings });
     const roleService = new RoleService({ roleStore, userStore, auditLogger });
     const accountService = new AccountService({ userStore, passwordHasher, auditLogger, settings });

@@ -130,4 +130,44 @@ class TokenEnrollmentChannel {
     }
 }
 
-module.exports = { OneTimeEnrollmentTokenStore, TokenEnrollmentChannel, sha256Hex, hashesMatch };
+/**
+ * Interactive-console `EnrollmentChannel` (D-035's sanctioned "controlled console" delivery;
+ * resolves the N-060 retrieval gap for a running server). Delivers the one-time secret by writing it
+ * to a CONTROLLED sink — by default `process.stdout` (the operator's own terminal running
+ * `node main.js`), which is DISTINCT from FUXA's shared `fuxa.log`/`runtime.logger` (D-022's concern
+ * is the persisted, shipped log — NOT the ephemeral first-run operator console). No token/redeem
+ * dance (the in-memory `OneTimeEnrollmentTokenStore` is per-process and unreachable from a separate
+ * CLI — N-060); the operator reads the secret at the console, signs in at `/auth/login`, and is
+ * gated to rotate immediately.
+ *
+ * SECURITY: the sink MUST be a controlled operator console, never `runtime.logger`/`fuxa.log`. The
+ * secret is written EXACTLY ONCE per delivery and is never persisted or returned.
+ */
+class InteractiveConsoleEnrollmentChannel {
+    /**
+     * @param {{ write?: (s: string) => void }} [deps] `write` defaults to `process.stdout.write`
+     *   (bound). Inject a spy in tests. MUST NOT be `runtime.logger`/anything that writes `fuxa.log`.
+     */
+    constructor(deps = {}) {
+        this.write = typeof deps.write === 'function' ? deps.write : (s) => process.stdout.write(s);
+    }
+
+    /**
+     * Write the one-time secret to the controlled console with an explicit rotate-now instruction.
+     * @param {{ username: string, secret: string, reason?: string }} info
+     * @returns {Promise<void>}
+     */
+    async deliver(info) {
+        const { username, secret, reason } = info || /** @type {any} */({});
+        const banner =
+            '\n==================== FUXA ADMIN ENROLLMENT (' + (reason || 'seed') + ') ====================\n' +
+            'A one-time secret was generated for administrator "' + String(username) + '".\n' +
+            'ONE-TIME SECRET: ' + String(secret) + '\n' +
+            'Sign in at /auth/login with this secret, then IMMEDIATELY change the password.\n' +
+            'This secret is shown ONCE here (operator console) and is NOT written to fuxa.log.\n' +
+            '====================================================================\n';
+        this.write(banner);
+    }
+}
+
+module.exports = { OneTimeEnrollmentTokenStore, TokenEnrollmentChannel, InteractiveConsoleEnrollmentChannel, sha256Hex, hashesMatch };

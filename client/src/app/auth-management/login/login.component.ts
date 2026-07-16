@@ -82,9 +82,19 @@ export class LoginComponent implements OnDestroy {
             // NO-OP: AuthService.signIn already persisted the FUXA session (with `groups`) under the
             // shared `currentUser` key; re-writing the module shape here would drop `groups`.
             saveSession: () => { /* intentionally empty — see class doc (D-042 Option 2) */ },
-            // Full reload to the authenticated landing route so FUXA re-initializes cleanly from the
+            // D-045: if the signed-in account is gated (`mustRotate`, surfaced on the sign-in payload
+            // and carried onto FUXA's `currentUser`), route IN-APP to the forced-rotation page (no
+            // full reload → the gated token stays and no protected call fires prematurely). Otherwise
+            // full reload to the authenticated landing route so FUXA re-initializes cleanly from the
             // stored session (mirrors FUXA's own post-login `projectService.reload()` behavior).
-            navigateToApp: () => { window.location.assign('/'); },
+            navigateToApp: () => {
+                const profile = authService.getUserProfile();
+                if (profile && (profile as any).mustRotate === true) {
+                    router.navigateByUrl('/auth/rotate-password');
+                } else {
+                    window.location.assign('/');
+                }
+            },
         });
 
         // Keep the presenter's credential fields in lockstep with the form.

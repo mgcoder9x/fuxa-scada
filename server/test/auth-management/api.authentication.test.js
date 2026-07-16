@@ -101,12 +101,18 @@ describe('Feature: auth-user-management — POST /api/signin (design/01 §4 · R
         assert.equal(r.body.field, 'password');
     });
 
-    it('AC-1.1 success ⇒ 200 { status, data:{ token, username, fullname, roles } }; token verifies', async () => {
+    it('AC-1.1 success ⇒ 200 { status, data:{ token, username, fullname, roles, groups, info } }; token verifies', async () => {
         const r = await req('POST', '/api/signin', { body: { username: 'alice', password: ALICE_PW } });
         assert.equal(r.status, 200);
         assert.equal(r.body.status, 'success');
-        assert.deepEqual(Object.keys(r.body.data).sort(), ['fullname', 'roles', 'token', 'username']);
+        // D-044 SUPERSEDE compat projection adds derived `groups` + `info` alongside the first-class
+        // `roles` (this router builds the service without authorization ⇒ groups passthrough of the
+        // record's stored -1; info carries roles only).
+        assert.deepEqual(Object.keys(r.body.data).sort(), ['fullname', 'groups', 'info', 'mustRotate', 'roles', 'token', 'username']);
         assert.equal(r.body.data.username, 'alice');
+        assert.equal(r.body.data.groups, -1);
+        assert.equal(r.body.data.info, '{"roles":["admin"]}');
+        assert.equal(r.body.data.mustRotate, false);
         const v = tokenService.verify(r.body.data.token);
         assert.equal(v.authenticated, true);
         assert.equal(v.id, 'alice');

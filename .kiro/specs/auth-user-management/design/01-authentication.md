@@ -95,7 +95,10 @@ SignInSession = {
   token:    string,       // Access_Token issued by Token_Service (REQ-2)
   username: string,
   fullname: string,
-  roles:    string[]      // derived from the stored record (see §2.3)
+  roles:    string[],     // derived from the stored record (see §2.3) — the module's first-class authority
+  groups:   number,       // D-044 SUPERSEDE compat projection: -1 iff isAdministrator(record), else record.groups|0
+  info:     string,       // D-044 SUPERSEDE compat projection: serialize({ roles }) only (no metadata leak)
+  mustRotate: boolean     // D-045: actionable REQ-17 flag (record.metadata.mustRotate) so the client routes a gated first-login to /auth/rotate-password
 }
 ```
 
@@ -115,6 +118,20 @@ first-class field so the service and API never parse `info` themselves (AC-16.2 
 > [`02-token-and-session.md`](./02-token-and-session.md)), not surfaced as a top-level
 > sign-in field. This is a deliberate, minimal contract change scoped to the module's own
 > router.
+>
+> **SUPERSEDE compatibility projection (D-044, 2026-07-16).** When the module SUPERSEDES FUXA's
+> `/api/signin` (D-014), the running FUXA client still authorizes on `currentUser.groups`
+> (`isAdmin()`/`ADMINMASK`, `checkPermission` bitmask) and `currentUser.info.roles` (`infoRoles`,
+> `checkPermission` role-mode). To keep that working WITHOUT rewriting FUXA's client+server
+> authorization, the success body is extended with two DERIVED compatibility projections:
+> `groups` = **`-1` iff `Authorization_Service.isAdministrator(record)`** (the authoritative,
+> RBAC-native admin predicate — a raw `record.groups` passthrough would misclassify a
+> module-created role-admin, since `User_Service.create` never sets `groups`), else the record's
+> numeric `groups` (or `0`); and `info` = `serialize({ roles })` (roles ONLY, so `infoRoles`
+> resolves while `mustRotate`/`tokenVersion` are never surfaced). RBAC `roles` remains the single
+> authority; `groups`/`info` are computed fresh at the session boundary (same principle as the
+> token's compat `groups` claim). Deployment note: non-admin widget permissions require
+> `settings.userRole=true` (FUXA role-name mode). See decisions/01-ai-decisions.md D-044.
 
 ### 2.4 Error identifiers
 

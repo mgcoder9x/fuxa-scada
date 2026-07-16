@@ -196,3 +196,47 @@ export function normalizeAdminError(status: number, body: unknown): AdminError {
     }
     return out;
 }
+
+// ---------------------------------------------------------------------------
+// Account rotate-password mapping / normalization (design/12 §4 · REQ-17, D-045)
+// ---------------------------------------------------------------------------
+
+export type RotateErrorId =
+    | 'bad_current_password'
+    | 'weak_or_reused_password'
+    | 'unexpected_error';
+
+export interface RotateError {
+    errorId: RotateErrorId;
+    status: number;
+    /** Server-provided detail (invalid-new policy message). Carried for diagnostics; the UI still
+     *  branches on `errorId` and renders a generic i18n key, never this text. */
+    detail?: string;
+}
+
+const ROTATE_ERROR_IDS: ReadonlySet<RotateErrorId> = new Set<RotateErrorId>([
+    'bad_current_password', 'weak_or_reused_password', 'unexpected_error',
+]);
+
+/** True iff a rotate-password body indicates success (`{ status:'success' }`). */
+export function isRotateSuccess(body: unknown): boolean {
+    return asString(asObject(body)['status']) === 'success';
+}
+
+/**
+ * Normalize a rotate-password error (HTTP status + error body) to a stable `RotateError`. Verified
+ * server ids (design/12 §4 / account.router.js): `bad_current_password` (400), `weak_or_reused_password`
+ * (400). Unknown/absent ids fall back to `unexpected_error`. `message` is carried as `detail`.
+ */
+export function normalizeRotateError(status: number, body: unknown): RotateError {
+    const b = asObject(body);
+    const raw = b['error'];
+    const errorId: RotateErrorId = typeof raw === 'string' && ROTATE_ERROR_IDS.has(raw as RotateErrorId)
+        ? (raw as RotateErrorId)
+        : 'unexpected_error';
+    const out: RotateError = { errorId, status: typeof status === 'number' ? status : 0 };
+    if (typeof b['message'] === 'string') {
+        out.detail = b['message'] as string;
+    }
+    return out;
+}

@@ -923,3 +923,269 @@
 - NOT verified (honest): the live in-browser end-to-end (navigate `/auth/login` → login `admin`/`123456` → FUXA recognizes admin → protected routes + `/auth/users` list). Reason: the **Playwright MCP browser was unstable this whole session** — repeated Chrome launch failures (180s `initializeServer` timeouts, then immediate "Target/context/browser closed"), caused by orphaned `ms-playwright-mcp` Chrome processes holding the profile lock (I cleaned them to 0 but the MCP still failed to hold a session). This is an ENVIRONMENT/tooling issue, not the code.
 - Safety posture (risk-contained): the change affects ONLY the additive `/auth/login` route; it does NOT alter FUXA's default login, `AuthGuard`, or the server, so it cannot affect the running app unless one navigates to `/auth/login`. Security was re-enabled only to attempt verification, then REVERTED to disabled; server restarted (clean state). The change is uncommitted → user reviews before commit.
 - Remaining to close 17.4 Option 2: browser end-to-end verification once Playwright MCP is healthy (or a manual browser check by the user), then optionally point `AuthGuard` at the module Login_Page behind a `legacy` flag. Task 17.4 stays NOT-done until the browser verification passes.
+
+
+### N-066: Task 17.4 Option-2 module-login cutover — BROWSER e2e VERIFIED (closes the N-065 pending blocker); User-Management list needs the server cutover (Option-1)
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.4 Option-2 — the pending browser verification from N-065)
+- Status: Active — Option-2 login VERIFIED e2e; User-Management data deferred to Option-1 (server SUPERSEDE)
+- Links: N-065, D-042, N-062, N-063, N-064/DV-011, N-061, D-037/D-038, N-042, D-014/TO-013, `client/src/app/auth-management/login/login.component.ts`, `server/_appdata/settings.js`
+- Context: N-065 left Option-2 "build-verified, browser e2e PENDING" (the other machine's Playwright MCP was wedged). This session's Playwright MCP was ALSO unavailable, so verified via a headless-Chrome CDP e2e (installed Chrome `--remote-debugging-port` + Node global WebSocket — the same reliable fallback as N-048/N-051), with **security ENABLED** (`_appdata/settings.js` `secureEnabled:true` + a strong `secretCode` + `tokenExpiresIn:'1h'`; admin verified `admin`/`123456`, groups=-1).
+- VERIFIED (security ON, real browser):
+  - **Server auth (curl):** `GET /auth/login` → 200 (D-040 SPA fallback serves the deep route); `POST /api/signin admin/123456` → **200** `{data:{username,fullname,groups:-1,info:null,token}}`; wrong password → **401**.
+  - **Login render (`/auth/login`):** module Login page renders — Username + Password labels (i18n), `<app-root>` innerHTML 3702 chars, 2 inputs; Sign In button enabled after fill.
+  - **Login flow (admin/123456 → submit):** navigated/reloaded to `/`; **`sessionStorage.currentUser` = {username:'admin', groups:-1}** + `window.fuxaAccessToken` published — i.e. Option-2's `AuthService.signIn` seam established the FUXA groups-based session; **0 console errors / 0 exceptions / 0 HTTP≥400**.
+  - **Guard accepts admin:** navigating `/editor` → stays at `/editor` (NOT redirected to login), the editor UI (Views/Widgets/Controls) renders, session still admin — the module login satisfies FUXA's `AuthGuard.isAdmin()` (groups-based). 0 console errors.
+  - **`/auth/users`:** the module User-Management page renders (title, Add User, Username/Full Name/Roles/Actions columns) but shows **"No data"** — VERIFIED ROOT CAUSE: FUXA's `GET /api/users` returns a BARE ARRAY `[{username,fullname,groups,info}]`, NOT the module envelope `{status,data:[...]}` that `mapUsersResponse` (reads `body.data`) expects → maps to `[]`. This is the EXPECTED Option-2 consequence (server NOT cutover): login uses FUXA's auth, but `/api/users` is still FUXA's shape. Full User-Management CRUD requires the server SUPERSEDE (Option-1/D-014) so the module owns `/api/users` with its envelope + first-class `roles`. 0 console errors on the page itself.
+- CONCLUSION: **Task 17.4 Option-2 (module LOGIN cutover) is browser-verified DONE** — the pending N-065 blocker is CLOSED. The module Login UI works end-to-end with security ON, establishes the FUXA session, and the app is fully usable as admin, with zero console errors. The remaining gap (User-Management LIST/CRUD data) is the **Option-1 server SUPERSEDE** (D-014/D-042), the documented high-risk later phase (groups→roles + `server/api/index.js` cutover) — NOT a defect in the delivered module.
+- Follow-ups unchanged: Option-1 full cutover (D-042, high blast radius, needs its own approval); TO-014 selective security re-patch; i18n 12-locale translation; Node-version pin.
+- Verification: CDP e2e JSON above (render/session/guard/console all green); `curl` signin 200/401; reproducible against the running server (terminalId 3) with security ON. Temp CDP scripts removed after use.
+
+
+### N-067: Option-1 STAGE 1 done — InteractiveConsoleEnrollmentChannel (resolves the N-060 enrollment-retrieval blocker at the root)
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.4 Option-1, stage 1 of D-043)
+- Status: Active — DONE + verified (additive module code; no FUXA-core; no data impact)
+- Links: D-043 (stage 1), N-060, D-035, D-022, `server/auth-management/services/enrollment.js`, `server/test/auth-management/enrollment-console.test.js`
+- What + why: N-060 verified the token+redeem model can't surface the one-time secret on a running server (in-memory per-process `OneTimeEnrollmentTokenStore` unreachable from a separate CLI; no redeem surface → admin lockout). Root fix per D-035's sanctioned "controlled console" channel: added `InteractiveConsoleEnrollmentChannel` to `enrollment.js` — `deliver({username, secret, reason})` writes the one-time secret to an injected sink defaulting to `process.stdout` (the operator's own terminal running `node main.js`), which is DISTINCT from FUXA's persisted/shared `fuxa.log`/`runtime.logger` (D-022's actual concern). The operator reads the secret at the console, signs in at `/auth/login`, and is gated to rotate immediately. This avoids the token/redeem HTTP surface entirely (no new attack surface) and closes the lockout at the root.
+- Verified: `enrollment-console.test.js` — 3 passing (secret+username+rotate-instruction+"not written to fuxa.log" surfaced to the injected sink; deliver awaitable; default sink is a plain stdout writer, not a logger). Full server auth-management suite re-run: **167 passing, exit 0** (baseline 164 + 3; no regression). Additive only — no FUXA-core edit, no data impact (nothing mounted/rotated; the channel is only exercised when the module bootstrap runs at stage-4 flip).
+- Remaining Option-1 (D-043): stage 2 (server SUPERSEDE behind `authModuleEnabled` DEFAULT-OFF, wiring `createAuthManagementModule` with this channel), stage 3 (client groups→roles migration), stage 4 (coordinated flip + `secureEnabled` + rebuild + Playwright/CDP e2e incl. the admin enrollment→rotate flow). Stages 2 is non-destructive (flag OFF); stage 4 is the data-affecting flip (force-rotates admin/123456) — approval-gated.
+- Verification: test exit codes above; `git diff` shows only additive `enrollment.js` + the new test + ledger.
+
+### N-068: Option-1 STAGE 2 done — flag-gated FUXA-core SUPERSEDE wiring (default OFF, verified zero-change)
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.4 / D-014 / D-043 stage 2)
+- Status: Active — stage 2 complete + verified; stages 3/4 remain
+- Links: D-043, D-014, N-067, N-042, N-059, `server/api/index.js`, `server/auth-management/index.js`
+- Statement: Wired `createAuthManagementModule` into FUXA-core `server/api/index.js` behind a new
+  OFF-by-default flag `settings.authModuleEnabled`. Design + verification of the wiring:
+  1. **Flag-OFF = byte-for-byte legacy behavior.** `init()` now dispatches: when
+     `runtime.settings.authModuleEnabled === true` it awaits `buildAuthModule(runtime)` then calls
+     `runInit(authModule)`; otherwise it calls `runInit(null)` **fully synchronously** (no module
+     require, no DB open, no bootstrap, no side effect). The whole former init body was moved verbatim
+     into `runInit(authModule)` (no re-indentation, no logic change) — only three guarded points added.
+  2. **SUPERSEDE (D-014) is a clean, complete swap.** VERIFIED the exact overlapping route surfaces:
+     FUXA `usersApi` owns `/api/users` + `/api/roles` (GET/POST/DELETE); `authApi` owns `/api/signin`,
+     `/api/refresh`, `/api/signout` (grep of `server/api/{users,auth}/**`). The module router owns
+     exactly those plus `/api/users/:username`, `/api/roles/:id`, `/api/account/rotate-password`. When
+     the flag is ON, BOTH `usersApi` and `authApi` are skipped and the module router is mounted at the
+     former usersApi position (after `authLimiter`/`limiter`, before the shared error handler). No
+     other FUXA router (prj/alarms/plugins/diagnose/daq/scheduler/scripts/resources/command/reports/
+     apikeys) claims those identity URLs, so nothing else is shadowed or lost.
+  3. **Build-order safety VERIFIED at source.** On the ON path the module is built BEFORE `runInit`
+     runs `authJwt.init(...)`. This is safe because (a) `TokenAdapter.secret` is a LIVE getter over
+     `authJwt.secretCode` (read at sign/verify time, not cached at construction — `fuxa-jwt.adapter.js`),
+     so the module picks up the persistent secret at request time; and (b) `runBootstrap` performs no
+     JWT signing (it seeds/rotates + delivers the enrollment secret only). Request-time signing occurs
+     long after `authJwt.init`.
+  4. **Timing safety VERIFIED at source.** `api.init()` is called synchronously in `fuxa.js`
+     (not awaited), but `apiApp` is consumed only at `app.use('/', FUXA.httpApi)` inside
+     `FUXA.start().then(...)` in `main.js` (after `runtime.start()` resolves — a later async boundary).
+     The OFF path stays fully synchronous regardless, so `apiApp` is assigned before any consumer.
+  5. **Wiring collaborators.** `buildAuthModule` lazily requires the module (zero import cost when
+     OFF), injects `InteractiveConsoleEnrollmentChannel` (N-067; secret → operator console, not
+     fuxa.log), a dedicated `Audit_Logger(createFuxaAuditSink(runtime.logger,{logDir}))` (D-023), and
+     opens the module's own sqlite connection at `settings.workDir/users.fuxap.db` (same file FUXA
+     uses; WAL coexists — `fuxa-auth-db.js`).
+- Verification performed: `node --check server/api/index.js` exit 0; `get_diagnostics` on the file = 0;
+  full server suite **167 passing exit 0** (no regression — the suite does not import api/index.js, so
+  this only confirms no cross-module breakage); **restarted the real server with the flag absent
+  (default OFF)** → boots clean ("WebServer is running http://127.0.0.1:1881/"), guest clients connect,
+  `GET /api/version` → 200 "1.0.0" (apiApp mounted, FUXA usersApi/authApi still authoritative). Flag-OFF
+  zero-change CONFIRMED.
+- Not yet done / risk: the ON path is NOT runtime-verified here — turning the flag ON runs the
+  data-affecting bootstrap (force-rotates the local known-default admin, D-013/DEF-B1) and needs the
+  client groups→roles migration (stage 3, N-042) to be usable in-browser. That flip is D-043 stage 4,
+  APPROVAL-GATED + data-affecting, and lands as one commit with the client + a rebuilt `client/dist`.
+  On ON-path build failure `init()`'s promise rejects (fail-fast, no silent insecure fallback);
+  operator-facing error surfacing is a stage-4 concern. No commit yet; source-only working-tree change.
+
+### N-069: Option-1 STAGE 3 blast-radius finding + lower-risk projection alternative (VERIFIED; needs approach choice)
+- Date: 2026-07-16
+- Phase: Design-validation (Task 17.4 / D-043 stage 3, before any client edit)
+- Status: Active — RECOMMENDATION pending the user's approach choice; NO client code changed
+- Links: D-043, D-042, D-007, D-011, N-042, TO-013, `client/src/app/_services/auth.service.ts`
+- Statement: Read the three FUXA-core client auth files to scope the sketched stage-3 "groups→roles
+  migration" and found the scope is much larger than the one-line plan implied. VERIFIED facts:
+  1. `auth.service.ts` `checkPermission(context)` is NOT a simple admin check. It is a DUAL model:
+     - default (`settings.userRole` falsey): a **16-bit bitmask** over the numeric `currentUser.groups`
+       (`mask = contextPermission>>8` for show, `&255` for enabled);
+     - role mode (`settings.userRole` truthy): a **role-NAME array** match — `currentUser.infoRoles`
+       (parsed from `currentUser.info` JSON `.roles`) intersected with `context.permissionRoles.show/
+       enabled`.
+     So FUXA **already has a first-class role-name permission mode** (`infoRoles`), toggled by
+     `settings.userRole`.
+  2. `checkPermission` is woven across the client — verified call-sites in `script.service.ts`,
+     `gauges/controls/html-scheduler`, `gauges/controls/html-switch` (passed around as a
+     `CheckPermissionFunction`), plus `scheduler.component`, etc. `isAdmin()` (bitmask `ADMINMASK`
+     over `groups`) gates `auth.guard.ts` and `module-permission.service.ts`.
+  3. `auth-interceptor.ts` sends `x-auth-user: { user, groups }` to FUXA endpoints; FUXA server-side
+     `verifyGroups` (api/index.js) authorizes on numeric groups; the module keeps `groups` INSIDE the
+     token (D-007) so FUXA endpoints still work post-cutover.
+- Impact / Risk: Rewriting `isAdmin`/`checkPermission` to consume the module's `roles` array as the
+  new primary authority would replace FUXA's entire client authorization model (bitmask + infoRoles)
+  and would need a matching server-side change — disproportionate, high-risk for "one mistake destroys
+  the company". This is precisely the big/high-risk Option-1 that D-042 flagged.
+- LOWER-RISK ROOT-CORRECT ALTERNATIVE (recommended, factual reason): instead of rewriting FUXA's
+  permission model, have the module's `/api/signin` success payload PROJECT its RBAC onto FUXA's
+  EXISTING session shape — return `{ token, username, fullname, roles, groups, info }` where `groups`
+  = the admin group code (-1/255) for admins (so `isAdmin()`+`ADMINMASK` keep working) and `info` =
+  `{ roles: [...roleNames] }` (so `infoRoles`+`checkPermission` role-mode keep working with
+  `settings.userRole=true`). The module stays the RBAC authority; `groups`/`info` are DERIVED
+  compatibility projections — the SAME principle D-007 already applies to the token's `groups` claim,
+  now extended to the client-facing body for the SUPERSEDE. This reuses FUXA's working, tested
+  permission code, shrinks the client edit to (a) reverting the login seam to the module
+  `AuthSignInClient` and (b) ensuring the module signin response carries the projection, and keeps the
+  cutover reversible. It DOES touch D-007's "don't surface groups top-level" client-facing stance —
+  which is why it needs an explicit decision (candidate D-044) before implementing.
+- Verification plan (once approach chosen): module signin-payload projection unit-tested (roles→group
+  code + info.roles); client jest for the login seam; production `ng build`; then the stage-4 flip
+  (both flags on) browser-verified e2e via CDP/Playwright (admin reads console secret → sign in →
+  rotate → user CRUD + non-admin denied + 0 console errors), landed as ONE commit with dist (TO-013).
+- Not done: no client file edited; awaiting the user's choice between (A) full groups→roles rewrite
+  and (B) this projection alternative before touching FUXA-core client authorization.
+
+### N-070: D-044 sign-in projection IMPLEMENTED + verified; client groups→roles rewrite proven UNNECESSARY
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.4 / D-043 stage 3)
+- Status: Active — server-side stage 3 done + verified; stage 4 flip remains approval-gated
+- Links: D-044, D-042 (Option B), D-014, N-042, N-065, N-069, `authentication.service.js`, `login.component.ts`
+- Statement: Implemented D-044 — the module's `Authentication_Service.signIn` success `session` now
+  carries the SUPERSEDE compat projection `{ ...token/username/fullname/roles, groups, info }`:
+  - `groups` via a new private `_projectGroups(record)` — `-1` iff the injected
+    `Authorization_Service.isAdministrator(record)` is true, else the record's own numeric `groups`
+    (or `0`); never throws (fail-to-own). `authorization` is an OPTIONAL constructor dep (passthrough
+    fallback keeps the isolated unit tests pure); the composition root (`auth-management/index.js`)
+    now injects `authorization` into `AuthenticationService`.
+  - `info = serialize({ roles })` (roles ONLY — no `mustRotate`/`tokenVersion` leak).
+  Design + ledger updated first (D-044 logged; D-007 given a reconciliation refinement; design/01
+  §2.2/§2.3 updated). Router returns `outcome.session` verbatim (JSDoc updated only).
+- Verification (this session): full server suite **169 passing exit 0** (baseline 167 + 2 new
+  projection unit tests: role-admin `groups=null`→`-1` via isAdministrator, and non-admin→`0`);
+  updated the two shape-asserting tests (`authentication.service.test.js` AC-1.1 deepEqual +
+  `api.authentication.test.js` data-keys) to the projected shape; `serialize({roles:['admin']})`
+  confirmed = `'{"roles":["admin"]}'`; diagnostics 0 on all three changed module files.
+- KEY FINDING (verified from source, reduces stage-3 client scope to ~zero): the existing Option-2
+  login seam (`login.component.ts`, N-065) delegates to FUXA `AuthService.signIn`, which reads
+  `result.data` and stores `currentUser` incl. `groups` (→ `isAdmin()`/`ADMINMASK`) and `info`
+  (→ `infoRoles` → `checkPermission` role-mode). Under the D-044 projection the module returns
+  exactly `{token,username,fullname,roles,groups,info}`, so FUXA's UNCHANGED groups-based client
+  authorization + the Option-2 login work end-to-end WITHOUT the groups→roles rewrite that D-042
+  Option-1 / the old stage-3 sketch implied. This is the payoff of Option B and confirms N-069's
+  recommendation was root-correct and low-risk.
+- Remaining (stage 4, APPROVAL-GATED, data-affecting — NOT done): flip `authModuleEnabled=true` +
+  `secureEnabled=true`; the module bootstrap force-rotates the local known-default admin (`123456`)
+  and prints the one-time secret to the operator console (N-067); rebuild `client/dist`
+  (`npx ng build --configuration production`); restart; browser-verify e2e via CDP/Playwright (admin
+  reads console secret → sign in → rotate → module `/auth/users` CRUD + non-admin denied + 0 console
+  errors); decide the FUXA built-in `/users` page routing (bare-array shape is superseded by the
+  module `/auth/users` `{data:[]}` UI); land as ONE commit with dist (TO-013). Recommended deployment
+  config for non-admin widget perms: `settings.userRole=true`. No commit yet; source-only working tree.
+
+### N-071: Stage-4 temp-instance verification found + ROOT-FIXED a bootstrap duplicate-seed race (SUPERSEDES the N-068 wiring mechanism)
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.4 / D-043 stage 2 rework + stage 4 dry-run)
+- Status: Active — root fix implemented + verified end-to-end on an isolated temp instance
+- Links: N-068 (mechanism SUPERSEDED), D-043, D-014, N-007, `server/api/index.js`, `server/runtime/index.js`, `server/runtime/users/usrstorage.js`
+- How found: ran a THROWAWAY FUXA instance (isolated `--userDir`, port 1882, `authModuleEnabled=true`
+  + `secureEnabled=true`, fresh DB) to browser-verify the stage-4 flow WITHOUT touching real data.
+  Boot FAILED with two real errors — exactly the value of runtime/browser testing:
+  1. `DuplicateKeyError: UNIQUE constraint failed: users.username` in the module bootstrap.
+  2. `TypeError: Router.use() requires a middleware function but got undefined` at `main.js:536`
+     (`app.use('/', FUXA.httpApi)` — `apiApp` was undefined).
+- Root cause (VERIFIED from source): FUXA's `runtime/index.js` calls `users.init(...)` (which, on a
+  fresh DB, creates the `users` table AND runs `usrstorage.setDefault()` seeding `admin`/`123456`,
+  N-007) **without awaiting it**, then `api.init` runs. My N-068 Stage-2 wiring built the module
+  (incl. `runBootstrap`) synchronously on the `api.init` critical path, so the module bootstrap raced
+  FUXA's async `setDefault` on the SAME users table: the module's plain `INSERT` collided with FUXA's
+  `INSERT OR REPLACE` (duplicate), and — worse — FUXA's `INSERT OR REPLACE` could CLOBBER a module
+  seed (wiping `mustRotate` → security hole). And because the module build was on `init`'s promise
+  chain, its rejection left `apiApp` unbuilt → the `main.js:536` crash. TWO seeders on one table.
+- Root fix (implemented in `server/api/index.js`; SUPERSEDES N-068's dispatcher mechanism, which is
+  retired): (1) `init()` ALWAYS builds `apiApp` synchronously via `runInit()` (no async on the
+  critical path) → `FUXA.httpApi` is never undefined; (2) when `authModuleEnabled`, mount a
+  SYNCHRONOUS **deferred proxy** (`mountDeferredAuthModule`) at the former usersApi position that
+  forwards to the real module router once built, and 503s ONLY the identity URLs
+  (`AUTH_MODULE_PATHS`) until then (other routes pass through); (3) build the module LAZILY on FUXA's
+  `runtime.events.once('init-users-ok', …)` — i.e. AFTER FUXA's user store created the table + ran
+  `setDefault` — so the module bootstrap deterministically REMEDIATES the FUXA-seeded admin (AC-17.4 /
+  DEF-B1: verify `123456` → re-hash to a fresh secret + `mustRotate` + bump `tokenVersion` + deliver
+  via console) instead of racing/clobbering. A module-build failure now leaves identity URLs at 503
+  but NEVER crashes FUXA (fail-safe). Race-safety argued from source: `api.init` runs synchronously
+  right after `users.init` was merely KICKED OFF (async, cannot have resolved), so the `once`
+  subscription reliably catches the event; defensive `setImmediate` fallback if no emitter.
+- Verification (temp instance, isolated DB): after the fix, boot is CLEAN — console prints the
+  one-time enrollment secret (reason `migration`), `WebServer is running :1882`. API lifecycle proven:
+  `/api/signin` 200 with D-044 projection `{...,groups:-1,info:'{"roles":[]}'}` (token `groups:-1`,
+  `tokenVersion:1`); gated token → `GET /api/users` **403** (mustRotate gate, AC-17.2); `POST
+  /api/account/rotate-password` **200**; re-signin(new pw) → `GET /api/users` **200** with the module
+  envelope `{data:[{admin,…,metadata:{mustRotate:false,tokenVersion:2}}]}` (fixes N-066 "No data").
+  BROWSER (Playwright MCP): `/auth/login` renders → admin login → `sessionStorage.currentUser` has
+  `groups:-1`+`infoRoles:[]` → `/auth/users` renders the user table (DATA, not "No data") → created
+  `operator1` via the UI (write path OK) → 0 console errors; then non-admin `operator1`
+  (`groups:0`) login → `/auth/users` shows **"Unauthorized!"** (RBAC denial) → 0 console errors.
+  Real server restarted flag-OFF after the rework → boots clean, `/api/version` 200 (zero-change
+  preserved); full server suite **169 passing**. Temp userDir deleted after.
+- Note: N-068's "runInit(authModule)/build-first" wiring is SUPERSEDED by this deferred-proxy design;
+  N-068's SUPERSEDE route-surface facts + flag-OFF zero-change conclusion REMAIN valid.
+
+### N-072: Fresh-deploy first-login rotate has NO browser UI (real gap surfaced by the stage-4 dry-run)
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.4 / REQ-17 client)
+- Status: Active — OPEN gap; a follow-up client task is needed before stage-4 is operationally complete
+- Links: REQ-17, D-012/D-013, N-013 (server rotate endpoint), `client/src/app/auth-management/**`
+- Statement: VERIFIED — on a fresh SUPERSEDE deploy the module seeds/remediates the admin with
+  `mustRotate=true` and delivers the one-time secret to the operator console (N-067/N-071). The
+  operator then signs in at `/auth/login`; sign-in SUCCEEDS (200, gated token), the FUXA client stores
+  the session and navigates to `/`, but EVERY protected call then returns **403** (the §05 bootstrap
+  gate permits only `account.rotatePassword`), so FUXA's interceptor signs the operator out — and
+  there is **NO client UI** wired to `POST /api/account/rotate-password` (grep of `client/src/**`
+  for `rotate-password`/`rotatePassword`/`account/rotate` = 0 matches). So a first-login operator is
+  effectively stuck in the browser; in the dry-run I cleared the gate via a direct API call.
+- Impact / Risk: blocks a clean fresh-deploy first-login experience (REQ-17 end-to-end via the UI).
+  Does NOT affect the SERVER correctness (all verified) nor an already-rotated admin.
+- Recommendation (follow-up task, not yet built): add a module rotate-password page/dialog (standalone,
+  DV-010 presenter + jest) that the Login flow routes to when a signed-in identity is `mustRotate`
+  (detectable: gated token + 403 on protected ops, or a `mustRotate` signal surfaced at signin), POSTing
+  `{currentPassword,newPassword}` to `/api/account/rotate-password`, then re-signs-in. Alternatively,
+  document that the very first rotation is performed via an ops/CLI call. Decision pending; logged so
+  stage-4 is not declared "done" while this UI gap is open.
+
+### N-073: D-045 forced-rotation UI IMPLEMENTED + browser-verified end-to-end — closes N-072
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.x client · REQ-17)
+- Status: Active — N-072 RESOLVED; the fresh-deploy first-login flow now works fully via the browser
+- Links: D-045, N-072, N-071, REQ-17, `authentication.service.js`, `login.component.ts`, `auth-management/rotate-password/**`
+- Statement: Built the forced first-login password-rotation UI (D-045), reusing the established
+  patterns (DV-010 pure presenter + jest, D-036 thin client, D-039 standalone):
+  - **Server:** `Authentication_Service.signIn` success payload gains top-level `mustRotate` (from
+    `record.metadata.mustRotate`) — the actionable, non-secret detection signal (design/01 §2.2 +
+    tests updated; suite **170 passing**, +1 mustRotate test).
+  - **Client:** new `RotatePasswordClient` (POST /api/account/rotate-password, `Skip-Error` keeps the
+    gated token but avoids the global 401/403 signout) + `normalizeRotateError` in the pure
+    `auth-protocol` (ids `bad_current_password`/`weak_or_reused_password`, verified from
+    `account.service.js`); new pure `RotatePasswordPresenter` (+ 9 jest specs) + standalone
+    `RotatePasswordComponent`/template/scss; route `/auth/rotate-password` (no AuthGuard, redirects to
+    login if no session); `login.component` `navigateToApp` routes IN-APP to `/auth/rotate-password`
+    when `getUserProfile().mustRotate` (no full reload → gated token stays, no premature protected
+    call); i18n keys added to `en.json`.
+- Verification: client `npx jest --runInBand` = **6 suites / 74 tests pass** (65 + 9 new; note: the
+  default parallel `jest` OOM-kills 2 workers on this machine — memory artifact, NOT a failure; all
+  executed tests pass); `npx ng build --configuration production` exit 0 (AOT-compiles the new
+  standalone component); diagnostics 0 on all new/changed client files. BROWSER e2e on a fresh
+  isolated temp instance (flags ON, port 1882, throwaway DB) via Playwright MCP: fresh deploy →
+  console secret [migration] → `/auth/login` sign-in with the one-time secret → **auto-routed to
+  `/auth/rotate-password`** [mustRotate detection] → filled current+new+confirm → submit →
+  **redirected to `/auth/login`** → signed in with the NEW password → navigated to the app [no longer
+  gated] → `/auth/users` renders the admin row [full admin]. **0 console errors across the entire
+  flow.** N-072 CLOSED.
+- Cleanup / discipline: temp instance + `.playwright-mcp` + jest/build out files deleted; `client/dist`
+  restored to the committed baseline via `git checkout -- client/dist` + `git clean -fd client/dist`
+  (the dist rebuild is part of the coordinated stage-4 commit, per N-050). Working tree is source-only
+  + ledger; NO commit. Real server still running flag-OFF (admin/123456 intact on the real DB).
+- Stage-4 status: the SERVER SUPERSEDE + D-044 projection + D-045 rotation UI are now ALL
+  implemented + verified (server suite 170, client 74, browser e2e green). The remaining stage-4 step
+  is the APPROVAL-GATED, data-affecting FLIP on the REAL instance (set `authModuleEnabled=true` +
+  `secureEnabled=true` + `userRole=true`, rebuild `client/dist`, restart, read the console secret,
+  land as ONE commit) + the FUXA built-in `/users` menu routing decision (module `/auth/users` vs
+  FUXA's bare-array page). Awaiting the user's go-ahead for the real flip.

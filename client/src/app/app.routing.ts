@@ -26,6 +26,7 @@ import { ArViewComponent } from './ar/ar-view/ar-view.component';
 // auth-management module standalone pages (Task 17.4 additive routing — see below)
 import { LoginComponent } from './auth-management/login/login.component';
 import { UserManagementComponent } from './auth-management/user-management/user-management.component';
+import { RotatePasswordComponent } from './auth-management/rotate-password/rotate-password.component';
 
 const appRoutes: Routes = [
     { path: '', component: HomeComponent},//, canActivate: [AuthGuard] },
@@ -60,6 +61,10 @@ const appRoutes: Routes = [
     // enabling security — remains a separate, confirmed step). Lazy `loadComponent` (standalone).
     { path: 'auth/login', component: LoginComponent },
     { path: 'auth/users', component: UserManagementComponent },
+    // Forced first-login password rotation (REQ-17, D-045). Reached from the Login flow when the
+    // signed-in account is `mustRotate`; no AuthGuard (like auth/login) — the page requires a session
+    // and redirects to auth/login if absent.
+    { path: 'auth/rotate-password', component: RotatePasswordComponent },
 
     // otherwise redirect to home
     { path: '**', redirectTo: '' }

@@ -91,6 +91,7 @@
 - Alternatives considered: Return both `groups` and `roles` (rejected: dual source of truth, drift risk — RBAC must be the single authority per master map). Drop `groups` entirely (rejected: would break existing FUXA endpoints during migration).
 - Impact / Risk: Clients migrating from FUXA's payload must read `roles` not `groups`; documented for the UI sections (07/08) and the human guide.
 - Verification: §2.3 and §4; success-payload test asserts shape `{ token, username, fullname, roles }`.
+- REFINEMENT 2026-07-16 (D-044): for the D-014 SUPERSEDE, the client-facing success body is extended to ALSO carry derived compatibility projections `groups` (from the authoritative `isAdministrator` predicate) and a minimal `info={roles}` so FUXA's existing groups/infoRoles client authorization keeps working without rewriting it. This does NOT change D-007's substance — RBAC `roles` remains the single authority and `groups`/`info` are derived views (same principle as the token's compat `groups` claim), with `info` minimized to roles so no internal metadata leaks. See D-044.
 
 ### D-008: bcrypt cost factor = 12 (configurable), with optional upgrade-on-verify rehash
 - Date: 2026-07-12
@@ -545,3 +546,125 @@
 - Impact / Risk + reversibility: option 2 edits `app.routing.ts` (guard → module Login_Page) + a small module Login_Page change (delegate session establishment to `AuthService`) + a `legacy` flag; all reversible via git + the flag. It does NOT touch `server/api/index.js` (server stays FUXA's `/api/signin` which returns `groups`) — so no server cutover risk yet.
 - Verification (planned, after the user picks an approach): with `secureEnabled=true`, log in via the module Login_Page in a real browser (Playwright) → `AuthGuard` grants protected routes, the header shows the admin, and `/auth/users` lists users — then revert security.
 - Awaiting: user's choice of Option 1 vs 2 (I recommend 2), + confirmation to make the (reversible) FUXA-core routing edit.
+
+
+### D-043: Option-1 (full server SUPERSEDE + groups→roles) staged execution plan — design-validated, data-affecting, approval-gated
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.4 Option-1 — the remaining high-risk cutover after Option-2 login DONE, N-066)
+- Status: **PROPOSED — plan validated against source; NOT executed (force-rotates the live admin + app-wide client migration → needs explicit user go)**
+- Links: D-042, D-014, TO-013, N-042, N-059, N-060, N-066, N-038/DEF-B1, D-013, `server/api/index.js`, `server/auth-management/index.js`, `services/bootstrap.js`, `services/enrollment.js`, `client/src/app/{_services/auth.service.ts,auth.guard.ts,_helpers/auth-interceptor.ts}`
+- VERIFIED facts grounding the plan (read this session): (a) `runBootstrap` on the CURRENT DB (has `admin`/`123456`, groups=-1) takes `_remediateKnownDefaultAdmins` → **re-hashes the admin to a fresh CSPRNG secret + `mustRotate=true`, delivered via `enrollmentChannel`** (DEF-B1) → **after cutover `admin`/`123456` NO LONGER works**; (b) `TokenEnrollmentChannel.deliver` buffers the secret behind a single-use token in an IN-MEMORY (per-process) `OneTimeEnrollmentTokenStore` and hands ONLY the token to an `operatorSink`; the secret is retrievable once via `store.redeem(token)` — a store method with NO wired surface (N-060) and, being in-memory, NOT reachable from a separate-process CLI; (c) `createAuthManagementModule` returns the router owning the identity URLs; mounting it (per D-014) means un-mounting FUXA `usersApi`/`authApi`; (d) the client authority is groups-based (N-042) and must migrate to roles.
+- Staged plan (each stage reversible/verified; flag DEFAULT-OFF until the coordinated flip):
+  1. **Enrollment retrieval flow (unblocks N-060, prerequisite):** an `operatorSink` that (i) writes `{username, token, expiresAt}` to a 0600 file under `_appdata` AND (ii) prints a redeem instruction to the SERVER STARTUP CONSOLE (the operator's controlled terminal running `node main.js` — distinct from the shared `fuxa.log`, permissible per D-035's "controlled console"); + a minimal IN-PROCESS single-use redeem surface (`POST /api/account/enrollment/redeem {token}` on the module router, returns the secret ONCE — gated by the single-use+TTL hashed token) so the admin can obtain the rotated secret, sign in (rotate-gated), and rotate via `POST /api/account/rotate-password`. Additive module code, no FUXA-core, no data impact until mounted.
+  2. **Server SUPERSEDE behind `settings.authModuleEnabled` (DEFAULT OFF):** in `server/api/index.js`, when ON: `await createAuthManagementModule(...)` (wired with `TokenEnrollmentChannel` + the operatorSink of stage 1, `runtime.users`, `createFuxaAuditSink`, db→FUXA `users.fuxap.db` workDir, settings) + mount its router after `authLimiter` + SKIP FUXA `usersApi`/`authApi`; when OFF: unchanged. Verify OFF = zero change; ON (in isolation) = module owns the identity URLs (P-014).
+  3. **Client `groups`→`roles` migration (N-042 root fix):** `AuthService.isAdmin()`/`checkPermission()`, `AuthGuard`, and the `x-auth-user` interceptor consume the module's first-class `roles` (from `/api/signin` `{roles}`); the module `/api/users` envelope now feeds the User-Management page (fixes the N-066 "No data"). Revert Option-2's login.component seam back to the module `AuthSignInClient` (roles-based).
+  4. **Coordinated flip + e2e:** set `authModuleEnabled=true` + `secureEnabled=true`, rebuild `client/dist`, restart; the admin retrieves the rotated secret via stage-1 enrollment → signs in → rotates → full admin; Playwright/CDP verify sign-in + User-Management CRUD (list/create/edit/delete) + non-admin denied + 0 console errors. Then land as ONE commit (TO-013).
+- Rationale: this is the ROOT fix for the N-066 "No data" + N-042 groups-impedance (module authoritative on the server + roles-based client), staged so every step is reversible and the highest-risk flip is last + verified. The enrollment retrieval flow (stage 1) closes the N-060 lockout at the root rather than shipping a lockout.
+- Alternatives considered: make the module client tolerant of FUXA's bare-array `/api/users` (rejected — leaf-patch; makes the list show FUXA users with empty roles but CRUD still breaks on shape/semantics; perpetuates groups model); stay at Option-2 permanently (rejected — User-Management non-functional, not commercial-grade).
+- Impact / Risk: DATA-AFFECTING — the cutover force-rotates `admin`/`123456` to an enrollment-delivered secret (admin/123456 stops working); app-wide client auth model change; FUXA-core `server/api/index.js` edit. Mitigated by the DEFAULT-OFF flag, the reversible stages, and full e2e before the flip. **Requires explicit user approval before stage 2+ (data-affecting).**
+- Verification: per-stage as above; final Playwright/CDP e2e with the module authoritative + security ON + the enrollment→rotate admin flow.
+
+### D-044: Sign-in payload PROJECTS RBAC onto FUXA's session shape (SUPERSEDE client-compat bridge)
+- Date: 2026-07-16
+- Phase: Design (§01) + Implementation (Task 17.4 / D-043 stage 3)
+- Status: Active (enacted 2026-07-16; module-only, non-data-affecting; the SUPERSEDE flip that makes it live is D-043 stage 4, approval-gated)
+- Links: D-007, D-014, D-042 (Option B chosen), N-042, N-069, REQ-1, REQ-10, `authentication.service.js`, `client/_services/auth.service.ts`
+- Context: Under the D-014 SUPERSEDE the module's `/api/signin` becomes the sole authority, but the
+  running FUXA client authorizes on `currentUser.groups` (`isAdmin()` via `ADMINMASK`; `checkPermission`
+  16-bit bitmask) and `currentUser.info.roles` (`infoRoles`, `checkPermission` role-mode when
+  `settings.userRole=true`). The module's designed payload `{token,username,fullname,roles}` (D-007)
+  carries neither `groups` nor `info`, so a bare SUPERSEDE breaks the client (N-042). D-042 posed
+  Option-1 (full groups→roles rewrite, high-risk) vs Option-2 vs a projection; the user chose the
+  projection ("duyệt theo khuyến nghị" → recommended low-risk root fix).
+- Statement: The module's sign-in SUCCESS payload is extended to
+  `{ token, username, fullname, roles, groups, info }`, where `groups` and `info` are DERIVED
+  COMPATIBILITY PROJECTIONS (not new authority):
+  - `groups` = **`-1` when the account is an administrator per the authoritative
+    `Authorization_Service.isAdministrator(record)` predicate**, else the record's own numeric
+    `groups` (or `0`). This is the ROOT-CORRECT derivation — VERIFIED that `UserService.create` never
+    sets `groups` (module-created users have `groups=null`; admin is RBAC-role-based), so a raw
+    `record.groups` passthrough would only classify the bootstrap admin (seeded `groups:-1`) and would
+    misreport a module-created role-admin as non-admin. Deriving from `isAdministrator` fixes that at
+    the essence and always reflects CURRENT role/permission state (no denormalized group column to
+    drift).
+  - `info` = `serialize({ roles })` — ONLY the roles array, so FUXA's `infoRoles` works while internal
+    metadata (`mustRotate`/`tokenVersion`) is NOT leaked to the client.
+  - `roles` stays first-class for the module's own UI.
+  Implementation site: `Authentication_Service.signIn` success branch, with `Authorization_Service`
+  injected as an OPTIONAL dependency (when absent — isolated unit tests — it falls back to
+  `record.groups` passthrough so the pure sign-in decision stays testable without the role store; the
+  composition root always injects it for the accurate derivation). The router returns the session
+  verbatim (no router logic change).
+- Rationale (precise, factual): reuses FUXA's EXISTING, tested authorization code (client + server
+  `verifyGroups`) instead of rewriting the whole client+server authz model (Option-1's blast radius,
+  N-069). The module remains the single RBAC authority; `groups`/`info` are derived views computed
+  fresh at the session boundary — the SAME projection principle D-007 already applies to the token's
+  `groups` claim, now extended to the response body, but hardened (admin derived from the authoritative
+  predicate, info minimized to roles).
+- Alternatives considered: (1) full groups→roles rewrite of `isAdmin`/`checkPermission`/guard/
+  interceptor + FUXA server (rejected: disproportionate/high-risk, D-042 Option-1); (2) raw
+  `record.groups` passthrough (rejected: only the bootstrap admin would be recognized — not
+  root-correct for module-created role-admins); (3) denormalize `groups=-1` into the store on
+  role-admin create/update (rejected: derived state drifts when a role's permissions change without
+  touching the user).
+- Impact / Risk: refines D-007's "no groups top-level / no raw info" client-facing stance for the
+  SUPERSEDE path (documented reconciliation on D-007). DEPLOYMENT NOTE for stage 4: for NON-admin
+  users' widget permissions to resolve, run `settings.userRole=true` (FUXA role-name mode → uses
+  `infoRoles`); admins work in either mode (isAdmin short-circuits). The projected role IDs must match
+  the identifiers the project's `permissionRoles` configs reference (data-alignment, not code).
+- Verification: unit tests — (a) success session carries `info` with the record's roles + `groups`
+  passthrough when no authorization injected; (b) WITH an authorization stub returning
+  `isAdministrator=true`, session `groups===-1`; (c) non-admin stub → passthrough/0. Full server suite
+  green. Live end-to-end (admin isAdmin + non-admin infoRoles permissions) is browser-verified at the
+  stage-4 flip (both flags on) via CDP/Playwright, landed as one commit with the client + rebuilt dist.
+
+### D-045: Forced first-login password-rotation UI (REQ-17 client) — closes the N-072 gap
+- Date: 2026-07-16
+- Phase: Implementation (Task 17.x client · REQ-17 AC-17.2/17.3)
+- Status: Active (enacted 2026-07-16; module-only client + one additive server field; goes live with the D-043 stage-4 flip)
+- Links: N-072, REQ-17, D-012/D-013, D-044, D-036/DV-010/D-039, `account.service.js`, `login.component.ts`
+- Context: N-072 (verified in the stage-4 dry-run) — a `mustRotate` admin signs in (200, gated token)
+  but every protected op then 403s and FUXA's interceptor logs them out, and NO client UI wires to
+  `POST /api/account/rotate-password`. So REQ-17's forced rotation is unusable via the web. The server
+  side (gate + rotate endpoint) is verified working (N-071); only the client UI + a detection signal
+  are missing.
+- Statement: Add a module-owned forced-rotation UI, reusing the established client patterns:
+  1. **Detection signal (one additive server field):** the sign-in success payload gains a top-level
+     `mustRotate: boolean` (from `record.metadata.mustRotate`) in `Authentication_Service.signIn`.
+     This is an ACTIONABLE, non-secret flag (distinct from D-044's "info={roles} only, no metadata
+     leak" — `tokenVersion`/other metadata stay hidden; only the boolean the client must act on is
+     surfaced, to an already-authenticated caller).
+  2. **Login routing:** `login.component`'s `navigateToApp` seam, on success, reads
+     `AuthService.getUserProfile().mustRotate` (FUXA's `signIn` casts the whole `data` onto
+     `currentUser`) and, when true, `router.navigateByUrl('/auth/rotate-password')` (in-app, NO full
+     reload → the gated token stays and no protected call fires prematurely); otherwise the existing
+     `window.location.assign('/')`.
+  3. **Route:** `/auth/rotate-password` → standalone `RotatePasswordComponent` (D-039), NO AuthGuard
+     (like `/auth/login`); the page requires a session and redirects to `/auth/login` if absent.
+  4. **Pure presenter (DV-010):** `RotatePasswordPresenter` holds ALL logic (fields
+     currentPassword/newPassword/confirmPassword; `canSubmit` = all non-empty + new===confirm +
+     new!==current + !pending; submit → `rotate` seam; on success → `onRotated` seam [clear session +
+     navigate to `/auth/login` with a "password changed, sign in" key]; error → map stable id to a
+     generic i18n key). Jest-tested headlessly.
+  5. **Thin client (D-036):** `RotatePasswordClient.rotate(current,new)` → `POST
+     /api/account/rotate-password` with header `Skip-Error` (keeps the `x-access-token` the interceptor
+     attaches, but opts out of the global 401/403 auto-signout so a 400 surfaces as a form error).
+     Mapping/normalization live in the framework-free `auth-protocol` (`normalizeRotateError`: stable
+     ids `bad_current_password`, `weak_or_reused_password`, else `unexpected_error` — verified from
+     `account.service.js`/`account.router.js`).
+  6. **i18n:** add rotate-page keys to `assets/i18n/en.json` (ngx-translate default-lang fallback,
+     per N-061).
+- Rationale (precise): the server rotate endpoint + gate already exist and are verified; the only
+  root gap is the missing client surface + a detection signal. Surfacing `mustRotate` at sign-in is
+  the minimal, non-sensitive signal that lets the login flow route deterministically to the rotation
+  page BEFORE any protected call triggers the interceptor sign-out. Reuses the exact
+  presenter+jest+thin-client patterns (DV-010/D-036/D-039), no FUXA-core authz rewrite.
+- Alternatives considered: (a) infer rotation-needed from a post-login 403 (rejected: ambiguous vs a
+  plain non-admin 403, and the interceptor already signs out on 403 — too late); (b) decode the JWT
+  for a mustRotate claim (rejected: `mustRotate` is deliberately NOT a token claim — it is live
+  account state, D-015); (c) a general change-password page now (deferred: N-036 flag #2 — a separate
+  future requirement; this is scoped to the REQ-17 forced-rotation flow).
+- Verification: jest for the presenter (success→onRotated, bad_current→key, mismatch→key, pending
+  gating) + `normalizeRotateError`; production `ng build`; browser e2e on the stage-4 temp instance —
+  fresh deploy → read console secret → login → auto-routed to `/auth/rotate-password` → rotate →
+  redirected to login → sign in with the new password → full admin `/auth/users`; 0 console errors.

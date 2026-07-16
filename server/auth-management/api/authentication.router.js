@@ -11,7 +11,9 @@
  * so tokens stay FUXA-compatible (D-003).
  *
  * Mappings:
- *  - signin (§01 §4): success 200 `{status:'success',data:{token,username,fullname,roles}}`;
+ *  - signin (§01 §4): success 200 `{status:'success',data:{token,username,fullname,roles,groups,info}}`
+ *    (D-044: `groups`+`info` are the SUPERSEDE client-compat projection built by the service — the
+ *    router returns `outcome.session` verbatim);
  *    unknown_user/bad_password → **byte-identical** 401 `{status:'error',error:'invalid_credentials'}`
  *    (DV-006 enumeration parity); missing_field → 400; rate_limited → 429 `too_many_attempts`.
  *  - refresh (§02 §6.3): disabled → 204; rotated → 200 + new cookie; every rejection → 401 + **clear

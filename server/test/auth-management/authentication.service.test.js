@@ -44,7 +44,14 @@ function build(o = {}) {
         reset: (u) => { calls.reset.push(u); },
     };
     const auditLogger = { record: (e) => { calls.audit.push(e); } };
-    const svc = new AuthenticationService({ userStore, passwordHasher, tokenService, bruteForceGuard, auditLogger });
+    // D-044: optional authorization predicate for the FUXA-compatible `groups` projection. When
+    // `o.authorization` is provided, calls are recorded; otherwise the service falls back to passthrough.
+    let authorization;
+    if (o.authorization !== undefined) {
+        calls.isAdministrator = [];
+        authorization = { isAdministrator: async (rec) => { calls.isAdministrator.push(rec); return o.authorization === true; } };
+    }
+    const svc = new AuthenticationService({ userStore, passwordHasher, tokenService, bruteForceGuard, auditLogger, authorization });
     return { svc, calls };
 }
 
@@ -54,7 +61,9 @@ describe('Feature: auth-user-management — Authentication_Service (design/01 ·
         const { svc, calls } = build({ record: ALICE, verifyResult: true });
         const res = await svc.signIn({ username: 'alice', password: 's3cret' });
         assert.equal(res.kind, 'success');
-        assert.deepEqual(res.session, { token: 'TOKEN123', username: 'alice', fullname: 'Alice A', roles: ['admin'] });
+        // D-044 projection: with no authorization injected the projection passes the record's own
+        // groups through (ALICE.groups=-1) and carries info={roles}; D-045 adds mustRotate (false here).
+        assert.deepEqual(res.session, { token: 'TOKEN123', username: 'alice', fullname: 'Alice A', roles: ['admin'], groups: -1, info: '{"roles":["admin"]}', mustRotate: false });
         // token issued from the LIVE record: groups + roles + tokenVersion (D-027)
         assert.equal(calls.issue.length, 1);
         assert.deepEqual(calls.issue[0], { username: 'alice', groups: -1, roles: ['admin'], tokenVersion: 5 });
@@ -64,6 +73,37 @@ describe('Feature: auth-user-management — Authentication_Service (design/01 ·
         // AC-1.5: exactly one delegated compare, with (submittedPassword, storedHash)
         assert.equal(calls.verify.length, 1);
         assert.deepEqual(calls.verify[0], ['s3cret', ALICE.passwordHash]);
+    });
+
+    it('D-044 projection: a module-created role-admin (groups=null) projects groups=-1 via isAdministrator', async () => {
+        // A module-created admin carries NO group code (UserService.create never sets groups); admin
+        // status is RBAC-role-based, so the projection MUST derive groups from isAdministrator, not
+        // from the (null) stored column — else the FUXA client's isAdmin() would fail for this admin.
+        const roleAdmin = { username: 'bob', fullname: 'Bob B', passwordHash: '$2a$12$x', roles: ['administrators'], metadata: {}, groups: null };
+        const { svc, calls } = build({ record: roleAdmin, verifyResult: true, authorization: true });
+        const res = await svc.signIn({ username: 'bob', password: 's3cret' });
+        assert.equal(res.kind, 'success');
+        assert.equal(res.session.groups, -1, 'RBAC admin projects to the FUXA admin group code');
+        assert.equal(res.session.info, '{"roles":["administrators"]}');
+        assert.equal(calls.isAdministrator.length, 1, 'admin predicate consulted for the projection');
+    });
+
+    it('D-044 projection: a non-admin (groups=null, isAdministrator=false) projects groups=0', async () => {
+        const operator = { username: 'op', fullname: 'Op', passwordHash: '$2a$12$x', roles: ['operators'], metadata: {}, groups: null };
+        const { svc } = build({ record: operator, verifyResult: true, authorization: false });
+        const res = await svc.signIn({ username: 'op', password: 's3cret' });
+        assert.equal(res.kind, 'success');
+        assert.equal(res.session.groups, 0, 'non-admin with no group code projects to 0');
+        assert.equal(res.session.info, '{"roles":["operators"]}');
+    });
+
+    it('D-045: success session surfaces mustRotate=true when the account is gated (metadata.mustRotate)', async () => {
+        const gated = { username: 'admin', fullname: 'Admin', passwordHash: '$2a$12$x', roles: [], metadata: { mustRotate: true, tokenVersion: 1 }, groups: -1 };
+        const { svc } = build({ record: gated, verifyResult: true });
+        const res = await svc.signIn({ username: 'admin', password: 'the-one-time-secret' });
+        assert.equal(res.kind, 'success');
+        assert.equal(res.session.mustRotate, true, 'gated account signals mustRotate so the client routes to rotation');
+        assert.equal(res.session.info, '{"roles":[]}', 'metadata (tokenVersion) is NOT leaked into info — only roles');
     });
 
     it('AC-1.2 unknown user (DV-006): invalid_credentials, no token, dummy-hash verify for timing parity, failure counted', async () => {

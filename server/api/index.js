@@ -35,7 +35,14 @@ var runtime;
 function init(_server, _runtime) {
     server = _server;
     runtime = _runtime;
+    // `apiApp` is ALWAYS built synchronously here (as in legacy FUXA) so `FUXA.httpApi` is never
+    // undefined when main.js mounts it. The optional auth-management SUPERSEDE (D-043 Stage 2/4,
+    // OFF by default) is wired inside `runInit` as a LAZY deferred mount — never on this critical
+    // path — so a module-bootstrap failure can never leave `apiApp` unbuilt (N-071).
+    return runInit();
+}
 
+function runInit() {
     return new Promise(function (resolve, reject) {
         if (runtime.settings.disableServer !== false) {
             apiApp = express();
@@ -67,14 +74,31 @@ function init(_server, _runtime) {
             apiApp.use(authLimiter);
             apiApp.use(limiter);
 
+            // D-043 Stage 2/4 — optional SUPERSEDE by the auth-management module (OFF by default).
+            const authModuleEnabled = runtime.settings.authModuleEnabled === true;
+
             prjApi.init(runtime, authMiddleware, verifyGroups);
             apiApp.use(prjApi.app());
-            usersApi.init(runtime, authMiddleware, verifyGroups);
-            apiApp.use(usersApi.app());
+            if (authModuleEnabled) {
+                // SUPERSEDE (D-014): the module owns /api/signin, /api/refresh, /api/signout,
+                // /api/users[/:username], /api/roles[/:id], /api/account/rotate-password; FUXA's
+                // overlapping usersApi + authApi are NOT mounted (verified non-overlapping with every
+                // other FUXA router). A deferred proxy is mounted SYNCHRONOUSLY here (former usersApi
+                // position — after authLimiter/limiter, before the shared error handler); the real
+                // module is built LAZILY after FUXA's user store is ready (`init-users-ok`) so its
+                // bootstrap REMEDIATES FUXA's seeded admin (AC-17.4) instead of racing FUXA's own
+                // `setDefault` seed on the same users table (root fix for the N-071 duplicate/clobber).
+                mountDeferredAuthModule(apiApp);
+            } else {
+                usersApi.init(runtime, authMiddleware, verifyGroups);
+                apiApp.use(usersApi.app());
+            }
             alarmsApi.init(runtime, authMiddleware, verifyGroups);
             apiApp.use(alarmsApi.app());
-            authApi.init(runtime, authJwt.secretCode, authJwt.tokenExpiresIn, runtime.settings.enableRefreshCookieAuth, runtime.settings.refreshTokenExpiresIn);
-            apiApp.use(authApi.app());
+            if (!authModuleEnabled) {
+                authApi.init(runtime, authJwt.secretCode, authJwt.tokenExpiresIn, runtime.settings.enableRefreshCookieAuth, runtime.settings.refreshTokenExpiresIn);
+                apiApp.use(authApi.app());
+            }
             pluginsApi.init(runtime, authMiddleware, verifyGroups);
             apiApp.use(pluginsApi.app());
             diagnoseApi.init(runtime, authMiddleware, verifyGroups);
@@ -368,6 +392,86 @@ function verifyGroups(req) {
     } else {
         return authJwt.adminGroups[0];
     }
+}
+
+// Identity URLs the auth-management module is authoritative for under SUPERSEDE (D-014). Used by the
+// deferred proxy to fail-safe (503) ONLY those paths while the module is still initializing.
+const AUTH_MODULE_PATHS = ['/api/signin', '/api/refresh', '/api/signout', '/api/users', '/api/roles', '/api/account'];
+
+/**
+ * Mount the SUPERSEDE auth-management router as a DEFERRED proxy (D-043 Stage 2/4; root fix for the
+ * N-071 bootstrap race). A synchronous middleware is mounted NOW (so `apiApp` is fully built before
+ * main.js reads `FUXA.httpApi`); it forwards to the real module router once that has been built. The
+ * module is built LAZILY on FUXA's `init-users-ok` event — i.e. AFTER `runtime.users` has created the
+ * table and run its own `setDefault` seed — so the module bootstrap deterministically REMEDIATES the
+ * FUXA-seeded admin (AC-17.4 / DEF-B1) instead of racing/clobbering it on the shared users table.
+ * Until the module is ready, ONLY the identity URLs return a clear 503 (fail-safe); every other route
+ * passes through untouched. A module-build failure leaves identity URLs at 503 but never crashes FUXA.
+ * @param {import('express').Application} app the apiApp
+ */
+function mountDeferredAuthModule(app) {
+    let moduleRouter = null;
+    app.use(function (req, res, next) {
+        if (moduleRouter) {
+            return moduleRouter(req, res, next); // express Router: handles its routes, next() otherwise
+        }
+        const p = req.path;
+        if (AUTH_MODULE_PATHS.some(function (m) { return p === m || p.indexOf(m + '/') === 0; })) {
+            return res.status(503).json({ error: 'service_unavailable', message: 'Auth module is initializing' });
+        }
+        return next();
+    });
+    const build = function () {
+        buildAuthModule(runtime).then(function (m) {
+            moduleRouter = m.router;
+            runtime.logger.info('auth-management module mounted — SUPERSEDE active (D-014)', true);
+        }).catch(function (e) {
+            runtime.logger.error('auth-management module build FAILED (identity URLs remain 503): ' + (e && e.stack ? e.stack : e));
+        });
+    };
+    // Race-safe: api.init runs synchronously right after runtime.init KICKED OFF users.init (async,
+    // cannot have resolved yet), so subscribing now reliably catches `init-users-ok`. A defensive
+    // fallback covers the (not-expected) case where the events emitter is unavailable.
+    if (runtime.events && typeof runtime.events.once === 'function') {
+        runtime.events.once('init-users-ok', build);
+    } else {
+        setImmediate(build);
+    }
+}
+
+/**
+ * Build the auth-management module for the SUPERSEDE cutover (D-014 / D-043 Stage 2). Everything is
+ * lazily required so that when `authModuleEnabled` is OFF this FUXA-core file loads and behaves
+ * exactly as before (no module import cost, no side effects). The one-time enrollment secret is
+ * delivered to the operator's controlled console (InteractiveConsoleEnrollmentChannel — D-035 /
+ * N-067; never fuxa.log), which resolves the N-060 running-server retrieval gap. Audit events go to
+ * the module's dedicated append-only sink (createFuxaAuditSink — D-023 / §09). The module opens its
+ * own sqlite connection to FUXA's users.fuxap.db (workDir) and runs the REQ-17 bootstrap once.
+ *
+ * @param {*} _runtime FUXA runtime (settings, users, logger)
+ * @returns {Promise<{ router: import('express').Router, db: any, services: object, stores: object }>}
+ */
+function buildAuthModule(_runtime) {
+    const { createAuthManagementModule } = require('../auth-management');
+    const { InteractiveConsoleEnrollmentChannel } = require('../auth-management/services/enrollment');
+    const { Audit_Logger, createFuxaAuditSink } = require('../auth-management/services/audit-logger');
+
+    const s = _runtime.settings || {};
+    const auditLogger = new Audit_Logger(createFuxaAuditSink(_runtime.logger, { logDir: s.logDir }));
+    return createAuthManagementModule({
+        workDir: s.workDir,
+        runtimeUsers: _runtime.users,
+        enrollmentChannel: new InteractiveConsoleEnrollmentChannel(),
+        auditLogger,
+        settings: {
+            secureEnabled: s.secureEnabled,
+            enableRefreshCookieAuth: s.enableRefreshCookieAuth,
+            https: s.https,
+            tokenExpiresIn: s.tokenExpiresIn,
+            refreshTokenExpiresIn: s.refreshTokenExpiresIn,
+            auth: s.auth || {},
+        },
+    });
 }
 
 function start() {

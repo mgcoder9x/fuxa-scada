@@ -33,6 +33,7 @@
  */
 
 const crypto = require('node:crypto');
+const { serialize } = require('../store/serialization'); // D-044: FUXA-compatible `info` projection
 
 class AuthenticationService {
     /**
@@ -42,6 +43,7 @@ class AuthenticationService {
      *   tokenService: { issueAccessToken(identity: object): string },
      *   bruteForceGuard: { checkAllowed(username: string): ({allowed:true}|{allowed:false,retryAfterMs:number}), recordFailure(username: string): void, reset(username: string): void },
      *   auditLogger: { record(event: object): void },
+     *   authorization?: { isAdministrator(subject: any): Promise<boolean> },
      *   clock?: () => number
      * }} deps
      */
@@ -63,6 +65,10 @@ class AuthenticationService {
         this.tokenService = d.tokenService;
         this.bruteForceGuard = d.bruteForceGuard;
         this.auditLogger = d.auditLogger;
+        // OPTIONAL (D-044): the RBAC admin predicate used to project a FUXA-compatible `groups` into
+        // the sign-in success body (the SUPERSEDE client bridge). When absent (isolated unit tests)
+        // the projection falls back to the record's own `groups`; the composition root injects it.
+        this.authorization = d.authorization && typeof d.authorization.isAdministrator === 'function' ? d.authorization : null;
         this.clock = typeof d.clock === 'function' ? d.clock : Date.now;
         /** @type {string|null} cached dummy hash for the DV-006 timing-parity verify (D-031) */
         this._dummyHash = null;
@@ -113,7 +119,7 @@ class AuthenticationService {
      * Attempt a sign-in. Resolves to exactly one closed `SignInOutcome`.
      * @param {{ username?: any, password?: any }} credentials
      * @returns {Promise<
-     *     { kind:'success', session: { token: string, username: string, fullname: string, roles: string[] } }
+     *     { kind:'success', session: { token: string, username: string, fullname: string, roles: string[], groups: number, info: string, mustRotate: boolean } }
      *   | { kind:'missing_field', error:'missing_field', field:'username'|'password' }
      *   | { kind:'unknown_user', error:'invalid_credentials' }
      *   | { kind:'bad_password', error:'invalid_credentials' }
@@ -187,10 +193,47 @@ class AuthenticationService {
 
         this.bruteForceGuard.reset(username); // AC-15.4
         this._audit(username, 'success');
+        // D-044: project a FUXA-compatible identity into the success body so the running FUXA client
+        // (groups-based isAdmin/checkPermission + infoRoles) keeps working under the D-014 SUPERSEDE.
+        // `groups` is derived from the authoritative RBAC admin predicate (admin ⇒ -1) — NOT a raw
+        // passthrough, because module-created admins carry no group code. `info` carries roles ONLY.
+        const groups = await this._projectGroups(record);
+        const info = serialize({ roles });
+        // D-045: surface the actionable `mustRotate` flag so the client can route a gated first-login
+        // admin to the forced password-rotation page (REQ-17). Non-secret boolean only — NOT the rest
+        // of metadata (tokenVersion etc. stay hidden, D-044).
+        const mustRotate = !!(record.metadata && record.metadata.mustRotate);
         return {
             kind: 'success',
-            session: { token, username: record.username, fullname: record.fullname, roles },
+            session: { token, username: record.username, fullname: record.fullname, roles, groups, info, mustRotate },
         };
+    }
+
+    /**
+     * Project a FUXA-compatible `groups` code for the sign-in success body (D-044). Returns `-1`
+     * (FUXA admin group — `jwt-helper.adminGroups`/`ADMINMASK`) when the account is an administrator
+     * per the injected `Authorization_Service.isAdministrator` predicate; otherwise the record's own
+     * numeric `groups` (or `0`). When no authorization service is injected (isolated unit tests) it
+     * falls back to the record's own `groups`. Never throws — a predicate failure degrades to the
+     * non-admin/own projection so a valid sign-in is never lost (the bootstrap admin still resolves
+     * to `-1` via its own stored `groups`).
+     * @param {any} record
+     * @returns {Promise<number>}
+     * @private
+     */
+    async _projectGroups(record) {
+        const own = typeof record.groups === 'number' ? record.groups : 0;
+        if (!this.authorization) {
+            return own;
+        }
+        try {
+            if (await this.authorization.isAdministrator(record)) {
+                return -1;
+            }
+        } catch (_e) {
+            // fail to the record's own groups; the sign-in itself stays successful.
+        }
+        return own;
     }
 }
 
