@@ -74,7 +74,13 @@ export class AuthService {
 					}
 					observer.next(null);
 				}, err => {
-					console.error(err);
+					// Expected, user-facing sign-in outcomes (401 invalid credentials, 429 rate-limited)
+					// are handled by the caller and surfaced in the UI; don't pollute the browser console
+					// / error-monitoring with them. Genuinely unexpected failures (network, 5xx, …) are
+					// still logged for diagnostics. (auth-management commercial console hygiene, DV-012.)
+					if (!err || (err.status !== 401 && err.status !== 429)) {
+						console.error(err);
+					}
 					observer.error(err);
 				});
 			} else {
