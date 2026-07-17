@@ -1425,3 +1425,16 @@
 - Residual: `/api/refresh` (module refresh-cookie flow) already mints module tokens (Token_Service) — no
   change needed. The client heartbeat path is unchanged (it stores whatever token it receives; now it
   receives a module token). Phase-2/3 UI items (D-046) remain deferred.
+
+### N-085: Phase-1 roles CRUD FULLY browser-verified post-D-047 (closes the N-083 residual)
+- Date: 2026-07-17
+- Phase: Verification (browser, flipped temp instance, server at D-047)
+- Status: Active — closes the "browser edit/delete pending N-082 fix" residual of N-083
+- Links: N-083, D-046, D-047, N-082/N-084
+- Statement: with D-047 in place, re-ran the full Role-Management page e2e in a real browser (flipped
+  temp instance, admin signed in): **create** role `operators`[user.read,user.update] → row appears;
+  **edit** add `role.read` → row PERSISTS `user.read, user.update, role.read` (this was 401-blocked by
+  N-082 before, now works — proving the heartbeat fix holds through a live UI session); **delete** →
+  table back to "No data"; **navigator → Users** → lands on `/auth/users` GRANTED (not "Unauthorized",
+  denied-count 0). **0 console errors** across the whole flow. D-046 Phase-1 is now fully
+  browser-verified (create/edit/delete/navigator) — the N-083 residual is closed.
