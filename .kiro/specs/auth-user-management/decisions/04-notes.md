@@ -1397,3 +1397,31 @@
   (contains the roles page) and is KEPT for the Phase-1 commit (matches the established dist-with-client
   commit pattern). Phase 2 (route FUXA Setup menu → module pages) + Phase 3 (My Account self-service)
   remain deferred (D-046).
+
+### N-084: D-047 implemented + verified — `/api/heartbeat` re-issues a MODULE token → N-082 RESOLVED
+- Date: 2026-07-17
+- Phase: Implementation (Stage-4 SUPERSEDE completion)
+- Status: Active — **N-082 RESOLVED**; server-only fix
+- Links: D-047, N-082, D-014/D-027/D-044, `server/api/index.js`, `server/auth-management/index.js`, `server/auth-management/services/authentication.service.js`
+- Correction to N-082 timing: the CLIENT heartbeat interval is **5 minutes** (`heartbeat.service.ts`
+  `5*60*1000`), NOT ~10s (N-082 inferred ~10s from the server `heartbeatIntervalSec`, which is not the
+  client poll rate). So N-082 broke a module session after ≤5 min. Mechanism/root-cause in N-082 stand.
+- Implemented (D-047, server-only — the client heartbeat handler already consumes
+  `{message:'tokenRefresh',token,data}` unchanged): `AuthenticationService` gained a shared async
+  `_buildSession(record, token)` (the D-044/D-045 projection — now the SINGLE source for both `signIn`
+  success and the new re-issue) + `issueSessionFor(username)` (reads the live record, mints a MODULE
+  access token via `Token_Service.issueAccessToken` stamped with the account's live `tokenVersion`,
+  returns the projected session; no password check — it re-issues for an already-authenticated
+  identity; null for unknown account). `createAuthManagementModule` exposes `issueSessionFor`;
+  `server/api/index.js` `mountDeferredAuthModule` captures it, and the `/api/heartbeat` handler, under
+  SUPERSEDE (`authModuleEnabled` + module ready), replies with `issueSessionFor(req.userId)` instead of
+  FUXA's `getNewTokenFromRequest`. Flag OFF / module-not-ready → the legacy FUXA path is unchanged.
+- Verification: server suite **172 passing** (170 + 2 new `issueSessionFor` tests; `signIn` unchanged
+  after the `_buildSession` extraction), diagnostics 0, `node --check` 0. EXACT N-082 repro on a flipped
+  temp instance (API-level, the precise HTTP mechanism the browser automates): login → rotate → signin →
+  `POST /api/heartbeat {params:true}` → **200**, refreshed token decodes to a MODULE token
+  `{id,sub,groups:-1,roles:[],tokenVersion:2,type:'access',jti,...}` (NOT the old FUXA `{id,groups}`) →
+  `GET /api/roles` WITH that refreshed token → **200** (was 401 pre-fix). N-082 closed at root.
+- Residual: `/api/refresh` (module refresh-cookie flow) already mints module tokens (Token_Service) — no
+  change needed. The client heartbeat path is unchanged (it stores whatever token it receives; now it
+  receives a module token). Phase-2/3 UI items (D-046) remain deferred.

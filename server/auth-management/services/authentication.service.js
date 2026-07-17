@@ -193,20 +193,53 @@ class AuthenticationService {
 
         this.bruteForceGuard.reset(username); // AC-15.4
         this._audit(username, 'success');
-        // D-044: project a FUXA-compatible identity into the success body so the running FUXA client
-        // (groups-based isAdmin/checkPermission + infoRoles) keeps working under the D-014 SUPERSEDE.
-        // `groups` is derived from the authoritative RBAC admin predicate (admin ⇒ -1) — NOT a raw
-        // passthrough, because module-created admins carry no group code. `info` carries roles ONLY.
+        const session = await this._buildSession(record, token);
+        return { kind: 'success', session };
+    }
+
+    /**
+     * Build the client-facing session shape from a live record + a freshly minted access token
+     * (D-044/D-045 projection — SINGLE SOURCE, reused by `signIn` success AND `issueSessionFor` so the
+     * two can never diverge, D-047). Projects a FUXA-compatible `groups` (admin ⇒ -1 via the
+     * authoritative predicate, else the record's own; D-044), `info=serialize({roles})` (roles only,
+     * no metadata leak), the first-class `roles`, and the actionable `mustRotate` flag (D-045).
+     * @param {any} record the live User_Record
+     * @param {string} token a freshly issued module access token
+     * @returns {Promise<{ token: string, username: string, fullname: string, roles: string[], groups: number, info: string, mustRotate: boolean }>}
+     * @private
+     */
+    async _buildSession(record, token) {
+        const roles = Array.isArray(record.roles) ? record.roles : [];
         const groups = await this._projectGroups(record);
         const info = serialize({ roles });
-        // D-045: surface the actionable `mustRotate` flag so the client can route a gated first-login
-        // admin to the forced password-rotation page (REQ-17). Non-secret boolean only — NOT the rest
-        // of metadata (tokenVersion etc. stay hidden, D-044).
         const mustRotate = !!(record.metadata && record.metadata.mustRotate);
-        return {
-            kind: 'success',
-            session: { token, username: record.username, fullname: record.fullname, roles, groups, info, mustRotate },
+        return { token, username: record.username, fullname: record.fullname, roles, groups, info, mustRotate };
+    }
+
+    /**
+     * Re-issue a session for an ALREADY-authenticated identity (D-047) — used by `/api/heartbeat`'s
+     * SUPERSEDE token refresh, NOT a login (there is NO password check here; the caller has already
+     * proven identity via a valid token). Reads the LIVE record, mints a fresh module access token
+     * stamped with the account's current `tokenVersion` (so the module's D-027 revocation ACCEPTS it,
+     * fixing N-082), and returns the same projected session as sign-in via `_buildSession`. Returns
+     * `null` when the account no longer exists (caller maps to 401).
+     * @param {string} username
+     * @returns {Promise<{ token: string, username: string, fullname: string, roles: string[], groups: number, info: string, mustRotate: boolean } | null>}
+     */
+    async issueSessionFor(username) {
+        const name = typeof username === 'string' ? username.trim() : '';
+        if (name === '') return null;
+        const record = await this.userStore.get(name);
+        if (!record) return null;
+        const roles = Array.isArray(record.roles) ? record.roles : [];
+        const identity = {
+            username: record.username,
+            groups: record.groups,
+            roles,
+            tokenVersion: Number(record.metadata && record.metadata.tokenVersion) || 0,
         };
+        const token = this.tokenService.issueAccessToken(identity);
+        return this._buildSession(record, token);
     }
 
     /**

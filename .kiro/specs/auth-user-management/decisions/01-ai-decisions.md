@@ -716,3 +716,47 @@
 - Verification: jest for the presenter (gate/list/create/update-permissions/delete/error-map/permission-catalog-union);
   production `ng build`; browser e2e on a temp flipped instance (admin → /auth/roles → create role +
   assign perms + edit perms + delete + navigator Users↔Roles; non-admin → denied); 0 console errors.
+
+### D-047: `/api/heartbeat` joins the SUPERSEDE — re-issues a MODULE token (fixes N-082)
+- Date: 2026-07-17
+- Phase: Implementation (Stage-4 SUPERSEDE completion · fixes N-082)
+- Status: Active (enacted 2026-07-17; user-approved Option A)
+- Links: N-082, D-014 (SUPERSEDE scope), D-015/D-027 (tokenVersion revocation), D-044 (signin projection), `server/api/index.js`, `server/auth-management/index.js`, `server/auth-management/services/authentication.service.js`
+- Context: N-082 (VERIFIED) — FUXA `/api/heartbeat` re-issues a FUXA-shaped token (`{id,groups}`, no
+  `tokenVersion`/`type`) via `authJwt.getNewTokenFromRequest`; the client heartbeat (`heartbeat.service.ts`,
+  interval **5 min**) adopts it via `setNewToken`, overwriting the module token; the module middleware
+  then rejects it (`Token_Service.verify` needs `type==='access'`; `resolveIdentity` coerces absent
+  `tokenVersion`→0 < account's ≥1 → revoked) → 401 on all module endpoints after ≤5 min. `/api/heartbeat`
+  was an auth/token-minting surface D-014 never covered.
+- Statement: under SUPERSEDE (`authModuleEnabled` + module built), `/api/heartbeat`'s authenticated
+  token re-issue is DELEGATED to the module so it mints a MODULE access token (carrying the live
+  `tokenVersion` + `roles` + `type:'access'`, D-027/D-028) and returns the SAME D-044/D-045 projected
+  session shape as sign-in. Concretely:
+  1. `AuthenticationService`: extract the sign-in success session build into a shared async
+     `_buildSession(record, token)` (groups projection via `_projectGroups` + `info=serialize({roles})`
+     + `mustRotate` — the D-044/D-045 shape) and add `issueSessionFor(username)` which reads the LIVE
+     record, mints a module access token via `Token_Service.issueAccessToken({username,groups,roles,
+     tokenVersion})`, and returns `_buildSession(...)` (or null if the account is gone). This is a
+     re-issue for an ALREADY-authenticated identity (heartbeat), NOT a login — no password check — so
+     it is exposed as an internal composition-root capability, never as an HTTP login path.
+     `signIn` is refactored to reuse `_buildSession` (single source → no projection drift).
+  2. `createAuthManagementModule`: expose `issueSessionFor` on the returned module object.
+  3. `server/api/index.js`: `mountDeferredAuthModule` captures `m.issueSessionFor`; the `/api/heartbeat`
+     handler, when the module is enabled+ready, replies `{message:'tokenRefresh', token: session.token,
+     data: session}` from `issueSessionFor(req.userId)` INSTEAD of the `authJwt` path. Flag OFF / module
+     not ready → the legacy FUXA path is byte-for-byte unchanged.
+- Rationale: root fix — brings `/api/heartbeat` into the D-014 SUPERSEDE so its refreshed token is a
+  module token the module accepts, exactly as signin/refresh already are. Reuses the signin projection
+  (`_buildSession`) so heartbeat and signin can never diverge. No new token model, no weakening of
+  D-027 revocation. FUXA-core edit is confined to the already-superseded `api/index.js` wiring point,
+  flag-guarded (OFF = legacy).
+- Alternatives considered: (B) module accepts tokenVersion-less tokens (rejected — guts D-027 active
+  revocation); (C) client stops adopting the heartbeat token under SUPERSEDE (rejected — leaf fix,
+  breaks sliding-session renewal, leaves two token models); (D) seed admin with tokenVersion 0
+  (rejected — breaks after any real rotation + defeats revocation).
+- Verification: server suite green incl. a new `issueSessionFor` test (returns a module token with
+  `type:'access'` + the account's tokenVersion + projected groups/info; unknown user → null; signin
+  unchanged); browser e2e on a flipped temp instance — login → trigger `POST /api/heartbeat {params:true}`
+  → assert the returned token decodes to a MODULE token (`type:'access'`, `tokenVersion≥1`, `roles`) and
+  a subsequent module request (`GET /api/roles`) with it returns 200 (not 401). This is the exact N-082
+  repro, now passing.

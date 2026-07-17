@@ -106,6 +106,24 @@ describe('Feature: auth-user-management — Authentication_Service (design/01 ·
         assert.equal(res.session.info, '{"roles":[]}', 'metadata (tokenVersion) is NOT leaked into info — only roles');
     });
 
+    it('D-047 issueSessionFor: re-issues a session for an already-authenticated identity (no password check) reusing the D-044/D-045 projection', async () => {
+        const { svc, calls } = build({ record: ALICE });
+        const session = await svc.issueSessionFor('alice');
+        // same projected shape as sign-in success (single source _buildSession)
+        assert.deepEqual(session, { token: 'TOKEN123', username: 'alice', fullname: 'Alice A', roles: ['admin'], groups: -1, info: '{"roles":["admin"]}', mustRotate: false });
+        // minted a MODULE access token with the account's live tokenVersion (so §05 D-027 accepts it)
+        assert.equal(calls.issue.length, 1);
+        assert.deepEqual(calls.issue[0], { username: 'alice', groups: -1, roles: ['admin'], tokenVersion: 5 });
+        // NO password compare (heartbeat re-issue is not a login)
+        assert.deepEqual(calls.verify, []);
+    });
+
+    it('D-047 issueSessionFor: unknown account → null (caller maps to 401)', async () => {
+        const { svc } = build({ record: undefined });
+        assert.equal(await svc.issueSessionFor('ghost'), null);
+        assert.equal(await svc.issueSessionFor('   '), null);
+    });
+
     it('AC-1.2 unknown user (DV-006): invalid_credentials, no token, dummy-hash verify for timing parity, failure counted', async () => {
         const { svc, calls } = build({ record: undefined });
         const res = await svc.signIn({ username: 'ghost', password: 's3cret' });

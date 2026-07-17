@@ -31,6 +31,9 @@ const version = '1.0.0';
 var apiApp;
 var server;
 var runtime;
+// D-047: the module's session re-issue capability, set once the SUPERSEDE module is built; used by
+// `/api/heartbeat` to refresh a MODULE token (tokenVersion-stamped) instead of a FUXA token (N-082).
+var authModuleIssueSession = null;
 
 function init(_server, _runtime) {
     server = _server;
@@ -225,6 +228,25 @@ function runInit() {
                         return res.status(200).json({
                             message: 'guest'
                         });
+                    }
+
+                    // D-047 (fixes N-082): under the SUPERSEDE, refresh a MODULE access token
+                    // (tokenVersion-stamped + type:'access' + roles) via the module's session re-issue,
+                    // instead of FUXA's `getNewTokenFromRequest` (which mints a tokenVersion-less token
+                    // the module then actively-revokes). Returns the same projected session as sign-in
+                    // (D-044/D-045) so the client's currentUser stays module-consistent.
+                    if (authModuleEnabled && typeof authModuleIssueSession === 'function') {
+                        let session;
+                        try {
+                            session = await authModuleIssueSession(req.userId);
+                        } catch (err) {
+                            runtime.logger.error(`api heartbeat: module session re-issue failed ${err}`);
+                            return res.status(503).json({ error: 'service_unavailable', message: 'Auth module unavailable' });
+                        }
+                        if (!session) {
+                            return res.status(401).json({ error: 'unauthorized_error', message: 'Unauthorized!' });
+                        }
+                        return res.status(200).json({ message: 'tokenRefresh', token: session.token, data: session });
                     }
 
                     const currentUser = await getCurrentTokenUser(req);
@@ -424,6 +446,7 @@ function mountDeferredAuthModule(app) {
     const build = function () {
         buildAuthModule(runtime).then(function (m) {
             moduleRouter = m.router;
+            authModuleIssueSession = m.issueSessionFor; // D-047: heartbeat MODULE-token refresh
             runtime.logger.info('auth-management module mounted — SUPERSEDE active (D-014)', true);
         }).catch(function (e) {
             runtime.logger.error('auth-management module build FAILED (identity URLs remain 503): ' + (e && e.stack ? e.stack : e));

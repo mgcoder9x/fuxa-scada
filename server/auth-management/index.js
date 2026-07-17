@@ -137,6 +137,10 @@ async function createAuthManagementModule(deps = {}) {
         router,
         db,
         bootstrapResult,
+        // D-047: re-issue a MODULE session for an already-authenticated identity (heartbeat token
+        // refresh under SUPERSEDE, fixes N-082). NOT a login — no password check; the caller proved
+        // identity via a valid token. Bound so the api layer can call it directly.
+        issueSessionFor: (username) => authenticationService.issueSessionFor(username),
         services: { authentication: authenticationService, token: tokenService, user: userService, role: roleService, account: accountService, authorization, bruteForce: bruteForceGuard },
         stores: { user: userStore, role: roleStore, refresh: refreshStore },
     };
