@@ -1478,3 +1478,34 @@
   - Already runtime-applied via admin `POST /api/settings` (persist userSettingsFile + mergeUserSettings + live re-init): `secureEnabled`, `tokenExpiresIn`, `secretCode`, `enableRefreshCookieAuth`, `refreshTokenExpiresIn`, rate limits, `userRole`.
   - NOT runtime-configurable (settings.js file + restart): `authModuleEnabled` (the D-014 SUPERSEDE mount — read ONCE at `api/index.js` init; remounting routers live is the N-071-class hazard, so a restart is the safe boundary) and the whole `settings.auth.*` block (passwordMinLength, passwordBlocklist, bcryptCost, jwtIssuer/jwtAudience, bootstrapAdminUsername, enrollment/brute-force tunables) — read at module build time, never surfaced in the admin Settings UI.
   - Proposed direction (candidate D-049, PENDING user approach confirmation — high-blast-radius FUXA-core + design-first): expose the `settings.auth.*` policy block in the admin Settings UI and live-apply it on `POST /api/settings` the same way `tokenExpiresIn` already is (password policy + brute-force + token/jwt tunables are safe to hot-swap because they're read per-operation); keep `authModuleEnabled` as a restart-gated deployment switch (document why: live router remount is unsafe) OR build a guarded live remount as a separate hardened effort. Design + validation BEFORE any code, per the standing process.
+
+### N-088: D-049 Phase 1 (server) IMPLEMENTED + verified — runtime auth-config daily-policy surface
+
+- Date: 2026-07-17
+- Phase: Implementation (D-049 Phase 1 of 3 — server only)
+- Status: Active — Phase 1 done; Phase 2 (client `/auth/settings` page) + Phase 3 (advanced token-signing iss/aud/alg) pending
+- Links: D-049, design/13-runtime-config.md, N-087
+- Statement: implemented the module-owned runtime configuration surface for the daily-policy fields
+  (password policy, brute-force, token TTLs, bcryptCost), all INSIDE `server/auth-management/**`:
+  - **New:** `store/auth-config-store.js` (single-row `auth_config` table in `FuxaAuthDb`, fail-safe
+    `get()` → null on corrupt/absent), `services/auth-config.service.js` (defaults ◁ settings.js
+    baseline ◁ DB override; strict bounded `validate`; `apply` = validate→persist→live-apply→audit;
+    `init`/`resetToDefaults`), `api/auth-config.router.js` (`GET/PUT/DELETE /api/auth/config` gated by
+    `settings.read`/`settings.manage`).
+  - **Additive hot-swap seams (no behavior change):** `BruteForceGuard.reconfigure()`,
+    `TokenService.reconfigure()` (mutates its live settings — already read per-call),
+    `BcryptHasherAdapter.setCost()` + `Password_Hasher.setCost()`, `UserService.setPasswordPolicy()`,
+    `AccountService.setPasswordPolicy()`. New functional perms `settings.read`/`settings.manage` added
+    to `ADMIN_PERMISSION_SET` (D-046 pattern).
+  - **Composition root:** builds the store + service, `await authConfigService.init()` BEFORE bootstrap
+    (so a persisted override — e.g. bcryptCost — applies to the seeded admin's hash too).
+  - **FUXA-core footprint:** exactly ONE line — `'/api/auth'` added to `AUTH_MODULE_PATHS` in
+    `server/api/index.js` (fail-safe 503 for config calls during module init). No hot-path edit.
+    `authModuleEnabled=false` ⇒ module never built ⇒ that array unused ⇒ OFF path byte-for-byte unchanged.
+- Verification: `node --check` on both edited files OK; diagnostics 0 on all new/edited files; full
+  server suite **195 passing** (was 172; +23 new: validation matrix incl. P-018 property, merge/
+  precedence/accumulate, fail-safe load P-019 incl. arbitrary-blob property, live-apply-to-services,
+  P-017 hot-swap on REAL services [bcryptCost non-retroactive: old `$2a$10$` hash still verifies after
+  →12; brute-force threshold→0 fail-closed on next check; tokenExpiresIn→next token TTL], and the HTTP
+  gate P-020 [401/403/200/400 + persist round-trip + DELETE reset]). Baseline signin/existing behavior
+  unchanged (172 still green). Server-only; no client change yet (Phase 2).

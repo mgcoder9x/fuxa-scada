@@ -130,6 +130,34 @@ class BruteForceGuard {
   }
 
   /**
+   * Live-reconfigure the throttling parameters (D-049 runtime config). Only the numeric policy knobs
+   * are updatable; the injected `clock`/`store` seams are left intact (swapping them at runtime would
+   * strand in-flight counters). Each field is applied only when a valid value is supplied, otherwise
+   * the current value is kept — the caller (AuthConfigService) validates bounds before calling. The
+   * change takes effect on the NEXT `checkAllowed`/`recordFailure`; already-armed throttles keep
+   * counting under the values captured when they were armed (no retroactive change).
+   * @param {BruteForceConfig} [cfg]
+   * @returns {void}
+   */
+  reconfigure(cfg = {}) {
+    if (Number.isInteger(cfg.threshold) && /** @type {number} */(cfg.threshold) >= 0) {
+      this.threshold = /** @type {number} */ (cfg.threshold);
+    }
+    if (typeof cfg.baseThrottleMs === 'number' && cfg.baseThrottleMs >= 0) {
+      this.baseThrottleMs = cfg.baseThrottleMs;
+    }
+    if (typeof cfg.backoffFactor === 'number' && cfg.backoffFactor >= 1) {
+      this.backoffFactor = cfg.backoffFactor;
+    }
+    if (typeof cfg.maxThrottleMs === 'number' && cfg.maxThrottleMs >= 0) {
+      this.maxThrottleMs = cfg.maxThrottleMs;
+    }
+    if (typeof cfg.failureWindowMs === 'number' && cfg.failureWindowMs >= 0) {
+      this.failureWindowMs = cfg.failureWindowMs;
+    }
+  }
+
+  /**
    * Compute the adaptive backoff interval for a given throttle level `k` (= failCount - threshold).
    * `currentInterval = min(maxThrottleMs ?? Infinity, baseThrottleMs * backoffFactor^k)` (§2.2/§3).
    * @param {number} throttleLevel k, the number of failures past the threshold (>= 0)

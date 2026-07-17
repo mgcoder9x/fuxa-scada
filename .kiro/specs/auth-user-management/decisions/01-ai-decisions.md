@@ -799,7 +799,7 @@
 ### D-049: Runtime configuration of the auth module (module-owned, near-zero FUXA-core) — "Hướng B"
 - Date: 2026-07-17
 - Phase: Design (new area · design/13-runtime-config.md)
-- Status: **PROPOSED — pending user validation of §11 open decisions before ANY code** (design-first)
+- Status: **Active — Phase 1 (server) IMPLEMENTED + verified (N-088, suite 195); Phase 2 (client page) + Phase 3 (advanced token-signing iss/aud/alg overlap) pending.** §11 open decisions 1/2/3 resolved with the user 2026-07-17 (functional perms; iss/aud overlap + alg confirmed re-login; scope confirmed)
 - Links: N-087 (request intake), D-003 (adapter boundary), D-014 (SUPERSEDE mount), D-034 (password policy), D-046 (additive-permission precedent), D-048, design/13-runtime-config.md
 - Context: user requirement "mọi cấu hình đều được cấu hình runtime trừ giao diện" (all config runtime-configurable except the UI). Verified current state: FUXA already live-applies `secureEnabled`/`tokenExpiresIn`/`secretCode`/`refresh` via `POST /api/settings`, but the whole `settings.auth.*` policy block + `bcryptCost` are `settings.js`-only (engineer + restart) and not surfaced in any UI.
 - Verified read-pattern facts (drives feasibility): `TokenService` reads `this.settings.*` LIVE per issue/verify (mutation hot-swaps); `BruteForceGuard`, `UserService`/`AccountService` password policy, and the bcrypt `BcryptHasherAdapter` cost are SNAPSHOTTED at construction (need small additive `reconfigure`/setter seams); bcrypt cost is embedded per-hash so a change is non-retroactive (old hashes still verify, D-008).

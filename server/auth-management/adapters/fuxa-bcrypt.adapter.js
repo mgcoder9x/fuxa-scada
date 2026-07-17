@@ -36,6 +36,20 @@ class BcryptHasherAdapter {
   }
 
   /**
+   * Set the work factor used by subsequent {@link hashSync} calls (D-049 runtime config). Because
+   * bcrypt embeds the cost in every digest, changing it is NON-retroactive: existing hashes still
+   * verify unchanged; only new hashes use the new cost. A non-integer is ignored (keeps the current
+   * cost) — the caller (AuthConfigService) validates the bound [10,15] before calling.
+   * @param {number} cost
+   * @returns {void}
+   */
+  setCost(cost) {
+    if (Number.isInteger(cost)) {
+      this.cost = cost;
+    }
+  }
+
+  /**
    * Produce a salted, one-way bcrypt digest of `plaintext`. A fresh random salt is generated per
    * call (numeric-rounds form), so two calls with the same input return two different digests that
    * each verify.

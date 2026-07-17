@@ -418,7 +418,7 @@ function verifyGroups(req) {
 
 // Identity URLs the auth-management module is authoritative for under SUPERSEDE (D-014). Used by the
 // deferred proxy to fail-safe (503) ONLY those paths while the module is still initializing.
-const AUTH_MODULE_PATHS = ['/api/signin', '/api/refresh', '/api/signout', '/api/users', '/api/roles', '/api/account'];
+const AUTH_MODULE_PATHS = ['/api/signin', '/api/refresh', '/api/signout', '/api/users', '/api/roles', '/api/account', '/api/auth'];
 
 /**
  * Mount the SUPERSEDE auth-management router as a DEFERRED proxy (D-043 Stage 2/4; root fix for the

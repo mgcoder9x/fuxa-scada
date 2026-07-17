@@ -78,6 +78,28 @@ class TokenService {
         this.userStore = d.userStore || null;
     }
 
+    /**
+     * Live-reconfigure token policy at runtime (D-049). `verify`/issue read `this.settings.*` on
+     * every call, so assigning here takes effect on the NEXT token WITHOUT restart. Only the
+     * runtime-tunable keys are updatable; each is applied only when explicitly provided (`undefined`
+     * leaves the current value). Non-retroactive: already-issued tokens keep their original TTL/claims.
+     * NOTE (D-049 Phase 3): `jwtIssuer`/`jwtAudience`/`algorithm` changes affect `verify` immediately
+     * and are handled with the transition-window / confirmed-re-login UX at that layer — this setter
+     * only stores the values.
+     * @param {{ tokenExpiresIn?: number|string, refreshTokenExpiresIn?: number|string,
+     *           jwtIssuer?: string|null, jwtAudience?: string|null, algorithm?: string, kid?: string|null,
+     *           devNonExpiringTokens?: boolean }} patch
+     * @returns {void}
+     */
+    reconfigure(patch) {
+        const p = patch || {};
+        for (const k of ['tokenExpiresIn', 'refreshTokenExpiresIn', 'jwtIssuer', 'jwtAudience', 'algorithm', 'kid', 'devNonExpiringTokens']) {
+            if (Object.prototype.hasOwnProperty.call(p, k) && p[k] !== undefined) {
+                this.settings[k] = p[k];
+            }
+        }
+    }
+
     /** @returns {string} the configured (or default) JWT algorithm. @private */
     _algorithm() {
         return this.settings.algorithm || DEFAULT_ALGORITHM;

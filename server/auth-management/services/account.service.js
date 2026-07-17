@@ -60,6 +60,19 @@ class AccountService {
         this.clock = typeof d.clock === 'function' ? d.clock : Date.now;
     }
 
+    /**
+     * Replace the effective password policy at runtime (D-049). Accepts an already-resolved
+     * `{ minLength, blocklist:Set }` (single-source with User_Service). Ignored if invalid. Takes
+     * effect on the NEXT rotatePassword; non-retroactive.
+     * @param {{ minLength: number, blocklist: Set<string> }} policy
+     * @returns {void}
+     */
+    setPasswordPolicy(policy) {
+        if (policy && typeof policy.minLength === 'number' && policy.blocklist instanceof Set) {
+            this.passwordPolicy = policy;
+        }
+    }
+
     /** @param {string} operation @param {string} subject @param {string} outcome @private */
     _audit(operation, subject, outcome) {
         try {

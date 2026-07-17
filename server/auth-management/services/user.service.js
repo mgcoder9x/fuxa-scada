@@ -83,6 +83,20 @@ class UserService {
     }
 
     /**
+     * Replace the effective password policy at runtime (D-049). Accepts an already-resolved
+     * `{ minLength, blocklist:Set }` (produced by `resolvePasswordPolicy`) so both enforcement sites
+     * (User_Service + Account_Service) stay single-source. Ignored if not a valid resolved policy.
+     * Takes effect on the NEXT create/update; existing users are unaffected (non-retroactive).
+     * @param {{ minLength: number, blocklist: Set<string> }} policy
+     * @returns {void}
+     */
+    setPasswordPolicy(policy) {
+        if (policy && typeof policy.minLength === 'number' && policy.blocklist instanceof Set) {
+            this.passwordPolicy = policy;
+        }
+    }
+
+    /**
      * @param {string} operation @param {string} subject @param {string} outcome @private
      */
     _audit(operation, subject, outcome) {

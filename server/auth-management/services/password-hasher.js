@@ -91,6 +91,19 @@ class Password_Hasher {
     }
 
     /**
+     * Set the work factor for subsequent hashing (D-049 runtime config). Delegates to the seam
+     * adapter's `setCost` when present (no-op otherwise). Non-retroactive: existing hashes still
+     * verify (bcrypt embeds cost); only new hashes use the new cost.
+     * @param {number} cost
+     * @returns {void}
+     */
+    setCost(cost) {
+        if (this.adapter && typeof this.adapter.setCost === 'function') {
+            this.adapter.setCost(cost);
+        }
+    }
+
+    /**
      * Produce a salted, one-way bcrypt digest of `plaintext` (fresh random salt per call). Total over
      * all string inputs; the plaintext is not retained after the call returns (§6 no-plaintext-logging).
      * @param {string} plaintext

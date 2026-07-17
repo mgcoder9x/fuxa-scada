@@ -39,11 +39,14 @@ const { UserService } = require('./services/user.service');
 const { RoleService } = require('./services/role.service');
 const { AccountService } = require('./services/account.service');
 const { runBootstrap } = require('./services/bootstrap');
+const { AuthConfigStore } = require('./store/auth-config-store');
+const { AuthConfigService } = require('./services/auth-config.service');
 const { createAuthorizationMiddleware } = require('./api/authorization.middleware');
 const { createAuthenticationRouter } = require('./api/authentication.router');
 const { createUsersRouter } = require('./api/users.router');
 const { createRolesRouter } = require('./api/roles.router');
 const { createAccountRouter } = require('./api/account.router');
+const { createAuthConfigRouter } = require('./api/auth-config.router');
 
 const DEFAULT_BCRYPT_COST = 12; // D-008
 
@@ -113,6 +116,18 @@ async function createAuthManagementModule(deps = {}) {
     const roleService = new RoleService({ roleStore, userStore, auditLogger });
     const accountService = new AccountService({ userStore, passwordHasher, auditLogger, settings });
 
+    // ---- Runtime config (D-049): module-owned override store + live-apply service. init() overlays
+    // any persisted runtime override onto the baseline-built services BEFORE bootstrap, so the seeded
+    // admin's hash honors an overridden bcryptCost too. Fail-safe: a corrupt override → baseline. ----
+    const authConfigStore = new AuthConfigStore({ db });
+    const authConfigService = new AuthConfigService({
+        store: authConfigStore,
+        baseline: { auth, tokenExpiresIn: settings.tokenExpiresIn, refreshTokenExpiresIn: settings.refreshTokenExpiresIn },
+        auditLogger,
+        services: { tokenService, bruteForceGuard, passwordHasher, userService, accountService },
+    });
+    await authConfigService.init();
+
     // ---- Bootstrap (once, at startup — REQ-17): seed-if-empty / retain+remediate ----
     const bootstrapResult = await runBootstrap({
         userStore, authorization, passwordHasher, auditLogger,
@@ -132,6 +147,7 @@ async function createAuthManagementModule(deps = {}) {
     router.use(createUsersRouter({ userService, requirePermission }));
     router.use(createRolesRouter({ roleService, requirePermission }));
     router.use(createAccountRouter({ accountService, requirePermission }));
+    router.use(createAuthConfigRouter({ authConfigService, requirePermission })); // D-049 runtime config
 
     return {
         router,
@@ -141,8 +157,8 @@ async function createAuthManagementModule(deps = {}) {
         // refresh under SUPERSEDE, fixes N-082). NOT a login — no password check; the caller proved
         // identity via a valid token. Bound so the api layer can call it directly.
         issueSessionFor: (username) => authenticationService.issueSessionFor(username),
-        services: { authentication: authenticationService, token: tokenService, user: userService, role: roleService, account: accountService, authorization, bruteForce: bruteForceGuard },
-        stores: { user: userStore, role: roleStore, refresh: refreshStore },
+        services: { authentication: authenticationService, token: tokenService, user: userService, role: roleService, account: accountService, authorization, bruteForce: bruteForceGuard, authConfig: authConfigService },
+        stores: { user: userStore, role: roleStore, refresh: refreshStore, authConfig: authConfigStore },
     };
 }
 

@@ -31,6 +31,9 @@
 const ADMIN_PERMISSION_SET = Object.freeze([
     'user.create', 'user.read', 'user.update', 'user.delete',
     'role.create', 'role.read', 'role.update', 'role.delete',
+    // D-049: functional permissions for runtime auth-config (settings are a single global object,
+    // so this is the function axis only — no data-scoped variant). Admins inherit both.
+    'settings.read', 'settings.manage',
 ]);
 
 /** FUXA legacy admin group codes (verified: `jwt-helper.adminGroups = [-1, 255]`). */
