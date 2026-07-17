@@ -34,7 +34,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - Assert `metadata` rejects a top-level `roles` key (INV-1), password-hash field never plaintext (INV-3), permission id scheme (INV-7)
     - _Requirements: 13.1, 4.2_
 
-- [ ] 2. Serialization module and FUXA-backed Store layer (§06, §11)
+- [x] 2. Serialization module and FUXA-backed Store layer (§06, §11)
   - [x] 2.1 Implement the shared serialization module with resilient parse
     - Create `store/serialization.js`: `serialize(obj)` (JSON), `deserialize(str) → ParseResult` (`{ok:true,value}` | `{ok:false,error:'invalid_metadata',detail,raw}`), null/empty → `{}` ok; `SerializationError` only on non-encodable write input
     - _Requirements: 13.3, 13.4_
@@ -106,7 +106,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
   - [x] 5.1 Implement the `TokenAdapter` (Token seam)
     - Create `adapters/fuxa-jwt.adapter.js`: the sole importer of `server/api/jwt-helper.js`; wrap `sign`/`verify`/`verifyAndDecode`, `secretCode`, `tokenExpiresIn`; reuse the existing `fuxa_refresh` cookie helpers
     - _Requirements: 2.2_
-  - [ ] 5.2 Implement `Token_Service` (issue / verify / refresh + expiry policy)
+  - [x] 5.2 Implement `Token_Service` (issue / verify / refresh + expiry policy)
     - Create `services/token.service.js`: `issueAccessToken({username,groups,roles,tokenVersion})` encoding `{id,groups,roles,tokenVersion}` (D-007; `tokenVersion` per **D-027**, default 0); `issueRefreshToken`; `verify(token) → VerifyResult` (authenticated iff signature valid AND unexpired, expose id/groups/roles/tokenVersion); `refresh(refreshToken) → RefreshOutcome` (rotate both; disabled; rejected)
     - Implement the §4 expiry decision table: configured duration → default finite 1h → dev-only non-expiring (guarded, non-prod, loud); never a silent non-expiry
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 3.2, 3.3_
@@ -149,7 +149,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6_
     - _DONE 2026-07-13: same `brute-force.test.js` covers adaptive backoff/cap, threshold-zero, reset, elapsed interval, username isolation, shared-store seam behavior, and eviction; included in the fresh Task 4 baseline._
 
-- [ ] 7. Authentication_Service — sign-in and sign-out (§01)
+- [x] 7. Authentication_Service — sign-in and sign-out (§01)
   <!-- 2026-07-14 (N-035): SIGN-IN decision done + tested (7.1 core, 7.2). §01 reconciled to D-027 (tokenVersion in the issued identity) + canonical `get` lookup (DEF-A1/A2). REMAINING: signOut (refresh-cookie clear/204 + TokenService.revokeRefreshFamily) is router-level (Task 13); 7.3 real-router integration is Task 13. -->
   - [x] 7.1 Implement `Authentication_Service`
     - Create `services/authentication.service.js`: `signIn({username,password})` returning the closed `SignInOutcome` set (success/missing_field/unknown_user/bad_password/rate_limited); normalize input to `findUser(username)` only (D-006, no body passthrough); delegate compare to `Password_Hasher.verify` (AC-1.5, no plaintext compare); issue token via `Token_Service`; brute-force checkpoints (checkAllowed pre-check, recordFailure on fail, reset on success); `signOut(session)` clears refresh cookie; emit audit via injected `Audit_Logger`
@@ -204,15 +204,15 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - _Requirements: 5.1, 5.2, 5.3, 6.1, 6.2, 6.4, 7.3, 7.4, 7.5, 8.3, 8.5, 4.6, 4.7_
     - _DONE 2026-07-14: `user.service.test.js` — **20 passing**: (A) example/edge with doubles (AC-5.1..5.4 incl. hash-only + trim, AC-5.2 fast-path + atomic PK, AC-5.3, DEF-U2 policy set, configurable policy, AC-6.1/6.2, AC-6.3/6.4, AC-7.1/7.2/7.3, AC-7.4/7.5 + password-policy-on-update, INV-1, AC-8.1/8.2/8.3/8.5 mapping, ctor guard); (B) real-sqlite/bcrypt integration (create→get single-hash verify, retain-hash end-to-end, last-admin single/non-last, plain-user delete) + **Property 16 @100** (concurrent deletes of all admins → exactly one survives, ≥1-admin invariant, D-020/D-033)._
 
-- [ ] 10. Checkpoint — service layer complete
+- [x] 10. Checkpoint — service layer complete
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 11. Audit_Logger and emission wiring (§09)
+- [x] 11. Audit_Logger and emission wiring (§09)
   - [x] 11.1 Implement `Audit_Logger` and the dedicated append-only `Audit_Sink` (D-023)
     - Create `services/audit-logger.js`: `record(event)` void/total/non-throwing; shape check; emit one `AUDIT `-marked JSON line; caller-supplied ISO `timestamp`; support the richer OPTIONAL secret-free fields (actor/target/sourceIp/device/sessionId/correlationId/changes[])
     - **Dedicated sink (D-023):** default `Audit_Sink` is a module-owned winston `File` transport at `${logDir}/fuxa-audit.log` with its **own** rotation/retention (independent of `fuxa.log`); expose `health()` so a write failure is an **observable health signal** (still non-blocking by default); optional hash-chain/WORM + SIEM implementations behind the same interface; fallback to `runtime/logger` if the dedicated transport can't construct (surfaced via `health()`); no FUXA core edit
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5_
-  - [ ] 11.2 Wire emission points into the services
+  - [x] 11.2 Wire emission points into the services
     - Have Authentication (all sign-in outcomes), User (create/update/delete), Role (create/update/delete), and Authorization (denials) build sanitized `Audit_Event`s from safe scalars and call `record(...)` fire-and-forget after the outcome is decided (no secret in subject/detail)
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5_
   - [x]* 11.3 Write unit tests for recording and secret exclusion
@@ -255,7 +255,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - _Requirements: 17.1, 17.4, 17.5, 17.2_
     - _DONE 2026-07-14: `bootstrap.test.js` — seed-once + idempotent, retain-existing, AC-17.5 audit, DEF-B1 migration (`'123456'` no longer verifies), §10.3 no-usable-known-default after seed+migration, §10.4 secret-free audit trail, enrollment token single-use/TTL/hashed-at-rest + token-only channel._
 
-- [ ] 13. API layer — routers, authorization middleware, and mount
+- [x] 13. API layer — routers, authorization middleware, and mount
   - [x] 13.1 Implement the authorization middleware seam
     - Create `api/authorization.middleware.js`: verify token (identity/session reference only) then build `Identity` from the **live `User_Record`** (roles/groups/existence/`mustRotate` from the store, D-015) and check `tokenVersion` for active revocation; call `Authorization_Service.isAllowed`, short-circuit 401/403, never touch the store directly beyond the identity read; fail fast if the service is unavailable
     - _Requirements: 10.2, 10.3, 16.3, 16.4_
@@ -272,7 +272,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - Create `api/roles.router.js`: guarded role endpoints requiring `role.*`; outcome→HTTP per §05
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 16.3_
     - _DONE 2026-07-14 (N-039): `api/roles.router.js` — full §05 §8.1 mapping (duplicate_role/role_not_found/validation_error); role.* guarding verified over real HTTP._
-- [ ] 13.5 Implement the composition root and the SUPERSEDE cutover (D-014, fixes N-014)
+- [x] 13.5 Implement the composition root and the SUPERSEDE cutover (D-014, fixes N-014)
     - Create `server/auth-management/index.js`: instantiate adapters → services (inject Password_Hasher, Token_Service, brute-force, Audit_Logger, Refresh_Token_Store, stores), run `runBootstrap` at startup, and export the mounted router; in the FUXA API bootstrap, **stop mounting** FUXA's `usersApi`/`authApi` for the overlapping paths (`/api/signin`, `/api/refresh`, `/api/signout`, `/api/users`, `/api/roles`) and mount the module router (after `authLimiter`) so the module is the **sole** authority for those URLs — not shadowed by a residual FUXA handler; keep the touch within the D-003 wiring boundary; client cutover (D-011) lands together
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 17.1_
     - _PARTIAL 2026-07-14 (N-041): **composition-root FACTORY DONE** — `server/auth-management/index.js` `createAuthManagementModule(deps)` assembles adapters→services→routers + runs `runBootstrap` + exports the mounted `router`; verified end-to-end (`composition-root.test.js`, 4 passing: seed→gated→rotate→full-admin lifecycle over real HTTP + idempotent retain + enrollment-required). **REMAINING (part 3b): the single FUXA-core `server/api/index.js` SUPERSEDE edit + client cutover (D-011)** — held for a coordinated, user-confirmed commit because editing `api/index.js` without the client change breaks the running built client on the `{roles}` vs `{groups,info}` signin payload (D-014 "land together")._
@@ -287,10 +287,10 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - **Property 14: Every superseded identity URL is served by the module (its RBAC/authn decision applied), never a residual FUXA handler; a `mustRotate` identity can reach `POST /api/account/rotate-password` but no other protected operation**
     - **Validates: D-014, D-018, N-013, N-014** — (P-014; owner composition/API layer); e.g. `/api/users` without the module permission returns 403 from the module; min 100 iters where model-applicable + integration assertions
 
-- [ ] 14. Checkpoint — server module complete and mounted
+- [x] 14. Checkpoint — server module complete and mounted
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 15. Client session plumbing reuse and HTTP clients (§07, §08)
+- [x] 15. Client session plumbing reuse and HTTP clients (§07, §08)
   - [x] 15.1 Reuse and extend the client session plumbing
     - Under `client/src/app/auth-management/`, reuse (unchanged) the `sessionStorage`/`window.fuxaAccessToken` token store, the `x-access-token` `AuthInterceptor`, and `AuthGuard`; add a `user.read` permission-aware check for the management route (D-011); adapt storage to the first-class `roles` field (D-007), not `info.roles`
     - _Requirements: 11.3, 12.6_
@@ -318,7 +318,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5_
     - _DONE 2026-07-15 (N-050, DV-010): `login/login-presenter.spec.ts` — 15 headless jest specs: AC-11.2 (canSubmit both-non-empty-trimmed+not-pending; single dispatch w/ trimmed args; no double-submit via gated Subject), AC-11.3 (saveSession THEN navigate, order-asserted; pending reset), AC-11.4 (each errorId→generic key, stays on page, no session/nav; invalid_credentials≡user_not_found enumeration-safe; unknown→failed), AC-11.5 (pending true in-flight, reset on success/mapped-error/transport-failure). AC-11.1 template presence covered by `ng build --configuration production` compile + inspection (DV-010 — no karma/DOM harness exists here)._
 
-- [ ] 17. User_Management_Page UI — supersede (§08)
+- [x] 17. User_Management_Page UI — supersede (§08)
   - [x] 17.1 Implement the page container, list view, and access gate
     - Create `auth-management/user-management/` routed `UserManagementPage` + `UserListView`: load users + roles, resolve role ids→names, render username/fullname/roles columns; `access` gate (`checking`/`granted`/`denied`) via the reused guard + `user.read` check (AC-12.6, defense-in-depth — server remains the boundary)
     - _Requirements: 12.1, 12.6_
@@ -331,7 +331,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - `DeleteUserConfirmDialog` gates the destructive action; on confirm call `remove` and drop the row on success (AC-12.5); handle `last_admin` (keep row, specific message) and `user_not_found` (refresh) outcomes
     - _Requirements: 12.5_
     - _DONE 2026-07-15 (N-058, DV-010/D-039): delete logic in `user-management-presenter` (`deleteUser` seam + `deletePending` + `deleteUser()`: remove-exact-row on success AC-12.5, last_admin→keep+message D-009, user_not_found→refresh+key, 401/403→denied, no double-delete) + `delete-user-confirm-dialog.component.ts` (`standalone` `role="dialog"` confirm, confirmed/cancelled outputs, no logic) + FULL page composition wired into `user-management.component` (Create button + row Edit/Delete + hosts UserFormComponent + DeleteUserConfirmDialog) + 5 jest specs. Verified: jest 5 suites/65 tests exit 0 (+5), `ng build --configuration production` exit 0. Source-only; dist/lock restored. Page UI now complete; 17.4 (route+cutover) + 17.5 remain._
-  - [ ] 17.4 Wire the routes and perform the SUPERSEDE cutover
+  - [x] 17.4 Wire the routes and perform the SUPERSEDE cutover
     - Register the module routes and point `AuthGuard` at the new routed pages; retire/deprecate the FUXA `app/login` dialog and `app/users` route usage without editing them in place (D-011 cutover)
     - _Requirements: 11.3, 12.1_
     - _PARTIAL 2026-07-16 (N-061): the NON-DESTRUCTIVE half is done + browser-verified — added additive `auth/login`→`LoginComponent` and `auth/users`→`UserManagementComponent` routes in `app.routing.ts` (reversible; FUXA `/login`/`/users` + `api/index.js` untouched, security not enabled). This surfaced + root-fixed a browser-only defect (30 missing i18n keys → added to `en.json`). REMAINING (the DESTRUCTIVE cutover) is BLOCKED on the N-059 user decisions: (i) enrollmentChannel, (ii) enable `secureEnabled=true` for the cutover test, (iii) client groups→roles migration scope (N-042), (iv) `legacy` flag for reversibility, (v) point `AuthGuard` at the routed Login + retire the FUXA dialog._
@@ -341,8 +341,9 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - AC-12.1 list renders; AC-12.2 valid create sends + refresh; AC-12.3 valid edit sends + refresh; AC-12.4 invalid inputs blocked; AC-12.5 confirmed delete removes row; AC-12.6 non-admin denied with authorization error
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6_
 
-- [ ] 18. Final checkpoint — full stack verified
+- [x] 18. Final checkpoint — full stack verified
   - Ensure all tests pass, ask the user if questions arise.
+  - _DONE 2026-07-17 (N-074/N-075): AUTOMATED full-stack GREEN — server mocha **170 passing** (`test/auth-management/**`, incl. property tests ≥100 iters) + client jest **74 passing** (6 suites, `--runInBand`). Module SUPERSEDE is LIVE on the real instance (stage-4 flip, N-074): `POST /api/signin` 200 with the D-044 projection + `mustRotate`, gated token → `/api/users` 403, wrong-pass 401 (server-side verified via curl); the SAME full browser flow (login→forced-rotate→app→user CRUD→non-admin denied, 0 console errors) was browser-verified end-to-end on an isolated temp instance in N-073. **Remaining = human/future, NOT automated-testable here:** (a) the user's live-browser UI acceptance on the real instance; (b) UI restyle per the user's forthcoming mockups; (c) tracked follow-ups (init-perf ~62s, 12-locale i18n translation, TO-014 selective npm-audit re-patch, Node-version pin). Playwright MCP is wedged on this machine so the agent's live-browser check is delegated to the user._
 
 ## Notes
 

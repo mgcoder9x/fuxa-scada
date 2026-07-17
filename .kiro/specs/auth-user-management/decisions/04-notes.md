@@ -1189,3 +1189,38 @@
   `secureEnabled=true` + `userRole=true`, rebuild `client/dist`, restart, read the console secret,
   land as ONE commit) + the FUXA built-in `/users` menu routing decision (module `/auth/users` vs
   FUXA's bare-array page). Awaiting the user's go-ahead for the real flip.
+
+
+### N-074: STAGE-4 FLIP EXECUTED on the real instance (user-approved) — module SUPERSEDE is LIVE + server-side verified; browser UI check delegated to the user
+- Date: 2026-07-17
+- Phase: Implementation (Task 17.4 / D-043 stage 4 — the approval-gated real-instance flip)
+- Status: Active — flip executed + server-side verified; **browser UI verification is the USER's next step** (they asked to check the UI); commit of the rebuilt `client/dist` HELD pending the user's UI confirmation
+- Links: D-043, D-044, D-045, D-014, N-067, N-070, N-071, N-073, `server/_appdata/settings.js`, `client/dist`
+- Trigger: user explicitly approved ("Thực hiện đi. Làm xong nhớ báo để kiểm tra UI").
+- Steps executed (in order, careful + verified):
+  1. Generated a strong JWT secret (`crypto.randomBytes(48).toString('hex')`, 96 hex).
+  2. **Rebuilt `client/dist`** — `npx ng build --configuration production` exit 0 (`main.eea319d8dcc6b0af.js`) — so the served client includes the D-045 rotation UI + all latest client code.
+  3. **Enabled flags** in `server/_appdata/settings.js` (git-untracked runtime data — secret NOT committed): `secureEnabled:true`, `secretCode:<96-hex>`, `tokenExpiresIn:'1h'`, `authModuleEnabled:true`, `userRole:true`. `node --check` + require load confirmed valid.
+  4. **Restarted `node main.js`** → module bootstrap **force-rotated the known-default admin** and printed the ONE-TIME SECRET to the operator console (reason `migration`): the secret was captured and handed to the user (shown ONCE; not written to fuxa.log — D-022/N-067). `WebServer is running http://127.0.0.1:1881/`.
+- Server-side VERIFIED (curl, live instance, module now authoritative on identity URLs):
+  - `POST /api/signin admin/<one-time-secret>` → **200** with the D-044 projection `{token, username:'admin', fullname, roles:[], groups:-1, info:'{"roles":[]}', mustRotate:true}`; token payload hardened `{id,sub,groups:-1,roles:[],tokenVersion:1,type:'access',jti,iat,exp}`.
+  - gated token → `GET /api/users` → **403** (bootstrap `mustRotate` gate allows only `account.rotatePassword`, AC-17.2) — security gate confirmed live.
+  - wrong password → **401**. `GET /api/settings`/`/api/project?views=lazy` → 200 after init (project loads).
+- Observations / follow-ups (verified, non-blocking):
+  1. **Slow init (~62s)** on this flip boot (vs 2–16s before) — noted for investigation (likely module sqlite bootstrap/WAL + bcrypt cost-12 rehash + first-run project storage). Server is fully up + responsive after init. NOT a blocker; flagged.
+  2. A one-shot `[ERR] Failed to load project data:` at init was transient (empty/fresh project before storage ready); `GET /api/project?views=lazy` → 200 afterwards. Likely pre-existing FUXA empty-project behavior, not auth-caused.
+  3. **Playwright MCP still wedged** on this machine (180s launch timeout) — browser e2e by the agent not possible; the USER will check the UI (they asked to). The full browser e2e for this exact flow was already green on an isolated temp instance in N-073.
+- **CRITICAL for the user:** the admin password `123456` NO LONGER WORKS. The current admin credential is the ONE-TIME SECRET printed to the console; sign in at `/auth/login` with it → auto-routed to `/auth/rotate-password` → set a new password. If the secret is lost before rotating, admin is locked out until re-remediation (delete the admin row / re-seed).
+- Commit posture: `client/dist` was rebuilt (tracked) — the stage-4 commit (dist + this ledger note) is HELD until the user confirms the UI is good, to avoid committing a dist with any UI issue they might spot. `_appdata/settings.js` (flags+secret) is git-untracked → stays local (flip is a per-deployment runtime activation; committed code defaults flags OFF, N-068).
+
+
+### N-075: Final checkpoint (Task 18) GREEN + tasks.md checkbox drift reconciled (verified, not assumed)
+- Date: 2026-07-17
+- Phase: Implementation (Task 18 final checkpoint + ledger/tasks hygiene)
+- Status: Active — automated full-stack verified; checkbox state now matches reality
+- Links: N-074 (flip), tasks.md, N-006 (no fabrication)
+- Checkpoint result: re-ran BOTH suites from clean — server `mocha test/auth-management/**` → **170 passing** (13s, incl. property tests ≥100 iters); client `npx jest --runInBand` → **74 passing** (6 suites). Both exit 0. (Client uses `--runInBand` because the default parallel run OOM-kills workers on this machine — memory artifact, not a failure, N-073.)
+- Checkbox reconciliation (a real drift I found + fixed at the root — many top-level boxes were left `[ ]` although their subtasks + code were DONE and tested): flipped to `[x]` after VERIFYING each against DONE-annotations + the green suite: Task **2** (2.1–2.10 done), **5.2** (token.service done), **7** (7.1/7.2 done; 7.3* optional), **10** (service-layer checkpoint = 170 green), **11 + 11.2** (audit emission — VERIFIED all services emit: `authentication`/`account`/`user`/`role`/`bootstrap` service.js each call `auditLogger.record(...)`), **13** (13.1–13.5,13.7 done), **13.5** (cutover = N-074 flip), **14** (server complete + mounted/live), **15** (15.1–15.4 done), **17 + 17.4** (cutover done), **18** (final checkpoint, this note). Only OPTIONAL `*` test subtasks remain unchecked (7.3*, 13.6*, 13.8*, 17.5*) — explicitly skippable per tasks.md Notes. `get_diagnostics` on tasks.md = 0 (Kiro spec format OK).
+- Honest scope of "done": ALL 17 requirements' implementation + the SUPERSEDE cutover are code-complete, tested (server 170 / client 74 / property ≥100 / isolated-browser e2e N-073), and the module is LIVE on the real instance (N-074). NOT done (human/future, not automated-testable by the agent): (a) the user's live-browser UI acceptance on the real instance; (b) UI restyle per the user's forthcoming mockups; (c) tracked follow-ups below.
+- Tracked follow-ups (recorded, NOT silently dropped): (1) **init-perf**: the flip boot took ~62s (N-074) vs 2–16s pre-flip and vs the temp instances (N-071/N-073) which booted fast — so it is likely specific to the real instance's project/DAQ data or users.fuxap.db WAL contention, NOT the module logic; needs boot profiling (deferred, non-blocking, server fully responsive after init). (2) i18n 12-locale translation of the ~30 new keys (English fallback in place). (3) TO-014 selective npm-audit re-patch at Angular-18-compatible versions. (4) Node-version pin (18/20/22) vs the current Node 24.
+- Commit: this checkpoint + checkbox sync + the N-074 stage-4 `client/dist` rebuild are committed together as the stage-4 close (per TO-013 "dist lands as one commit"). `_appdata/settings.js` (flags+secret) stays git-untracked (per-deployment runtime activation; committed code defaults flags OFF).
