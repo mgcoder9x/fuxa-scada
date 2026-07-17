@@ -123,6 +123,12 @@ export class SettingsService {
             this.appSettings.userRole = settings.userRole;
             dirty = true;
         }
+        // D-048: mirror the server SUPERSEDE flag so the Setup menu can route Users/Roles to the
+        // module pages when the module owns identity (coerced to boolean; absent ⇒ false = legacy).
+        if (!!settings.authModuleEnabled !== this.appSettings.authModuleEnabled) {
+            this.appSettings.authModuleEnabled = !!settings.authModuleEnabled;
+            dirty = true;
+        }
         if (settings.nodeRedEnabled !== this.appSettings.nodeRedEnabled) {
             this.appSettings.nodeRedEnabled = settings.nodeRedEnabled;
             dirty = true;

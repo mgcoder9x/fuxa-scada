@@ -760,3 +760,38 @@
   → assert the returned token decodes to a MODULE token (`type:'access'`, `tokenVersion≥1`, `roles`) and
   a subsequent module request (`GET /api/roles`) with it returns 200 (not 401). This is the exact N-082
   repro, now passing.
+
+### D-048: Phase-2 — editor Setup menu routes Users/Roles to the module pages under SUPERSEDE (flag-gated)
+- Date: 2026-07-17
+- Phase: Implementation (post-flip UI · discoverability)
+- Status: Active (Phase 2 — CLIENT-ONLY; user-approved "proceed")
+- Links: D-046, D-014, N-081, `client/editor/setup/setup.component.*`, `client/_services/settings.service.ts`, `client/_models/settings.ts`
+- Context: the module pages (`/auth/users`, `/auth/roles`) are only reachable by typing the URL — no
+  UI entry. FUXA's editor Setup menu (`goTo('/users')`/`goTo('/userRoles')`) points at FUXA's built-in
+  Users/UserRoles pages, which under SUPERSEDE read `/api/users`/`/api/roles` in the module `{data:[]}`
+  envelope shape → broken. The client bundle is SHARED across deployments (some NOT flipped), so the
+  re-point MUST be conditional on the runtime flag (an unconditional re-point would send a non-flipped
+  deployment to the module UI, which can't read FUXA's bare-array endpoints — N-066).
+- Verified feasibility: `/api/settings` ALREADY returns `authModuleEnabled` (it is a top-level
+  `runtime.settings` field; `getSanitizedSettings`/`getPublicSettings` = `JSON.parse(JSON.stringify)`
+  serialize it — no server change needed). The client just doesn't STORE it: `AppSettings` copies
+  fields selectively and never copies `authModuleEnabled`.
+- Statement (CLIENT-ONLY): (1) add `authModuleEnabled = false` to `AppSettings`; (2)
+  `SettingsService.setSettings` copies `settings.authModuleEnabled` into `appSettings`; (3)
+  `setup.component` injects `SettingsService` and the two menu buttons call `goToUsers()`/
+  `goToUserRoles()` which navigate to `/auth/users`/`/auth/roles` WHEN `authModuleEnabled` is true, else
+  the legacy `/users`/`/userRoles` (byte-for-byte unchanged for non-flipped deployments). No server
+  edit; the `/auth/*` routes already exist (D-046).
+- Rationale: root-correct discoverability without breaking the shared client — gate on the SAME flag
+  that drives the server SUPERSEDE, sourced from the already-exposed settings. Minimal, additive,
+  reversible.
+- Alternatives considered: (a) route-level redirect guard on `/users`/`/userRoles` (more comprehensive —
+  also catches direct-URL — but adds a guard interacting with the existing AuthGuard; heavier); (b)
+  unconditional re-point (rejected — breaks non-flipped deployments); (c) make the module UI clients
+  accept BOTH bare-array and `{data:[]}` (rejected — write contracts also differ; leaky).
+- Residual (noted, Phase-2b candidate): a direct-URL visit to `/users`/`/userRoles` under SUPERSEDE
+  still renders FUXA's (broken) built-in page — the menu re-point covers the primary path; a
+  flag-gated route redirect would close the direct-URL edge comprehensively.
+- Verification: production `ng build`; browser — FLIPPED temp instance: open editor Setup → Users →
+  lands on `/auth/users` (module), User-Roles → `/auth/roles`; NON-flipped (real server, flag off):
+  Users → `/users` (FUXA) unchanged. 0 console errors.

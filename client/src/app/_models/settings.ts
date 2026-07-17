@@ -35,6 +35,9 @@ export class AppSettings {
     logFull = false;
     /** User role enabled (default group) */
     userRole = false;
+    /** auth-management module SUPERSEDE active (D-014/D-048) — server flag mirrored client-side to
+     *  route the Setup menu Users/Roles to the module pages when the module owns identity. */
+    authModuleEnabled = false;
     /** Enable Node-Red */
     nodeRedEnabled = true;
     /** Node-RED access mode: secure | legacy-open */

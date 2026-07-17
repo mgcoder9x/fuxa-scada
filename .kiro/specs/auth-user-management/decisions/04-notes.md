@@ -1438,3 +1438,26 @@
   table back to "No data"; **navigator → Users** → lands on `/auth/users` GRANTED (not "Unauthorized",
   denied-count 0). **0 console errors** across the whole flow. D-046 Phase-1 is now fully
   browser-verified (create/edit/delete/navigator) — the N-083 residual is closed.
+
+### N-086: D-048 Phase-2 (Setup menu → module Users/Roles pages) IMPLEMENTED + browser-verified
+
+- Date: 2026-07-17
+- Phase: Implementation + Verification (post-flip UI · discoverability)
+- Status: Active — D-048 done; residual (direct-URL `/users`/`/userRoles` under SUPERSEDE) tracked as Phase-2b candidate
+- Links: D-048, D-046, D-014, N-066 (bare-array vs `{data:[]}` envelope mismatch that motivates the gate)
+- Statement: implemented the CLIENT-ONLY D-048 re-point so the module pages are reachable from the
+  editor UI (previously URL-only): `AppSettings.authModuleEnabled` field + `SettingsService.setSettings`
+  boolean-coerced mirror of the already-exposed `/api/settings` flag + `setup.component` `goToUsers()`/
+  `goToUserRoles()` gating on it (`authModuleEnabled ? '/auth/users' : '/users'`, resp. `/auth/roles` :
+  `/userRoles`), buttons re-wired, existing `[disabled]="isToDisable(...)"` guards preserved. No server
+  edit; `/auth/*` routes pre-exist (D-046).
+- Verification: `ng build --configuration production` exit 0, diagnostics 0. Browser (FLIPPED temp
+  instance port 1882, admin signed in): editor → Edit Project (Setup) → **Users** → navigates to
+  `/auth/users` (module page); reopen Setup → **Roles** → navigates to `/auth/roles` — Role-Management
+  page renders (Users|Roles nav + "Role Management" heading + table), `GET /api/roles` → **200**
+  (confirms token/SUPERSEDE healthy, no N-082-class regression), empty "No data" is this temp DB's
+  legitimate empty state. **0 console errors** across the whole flow. NON-flipped path verified by code
+  inspection: the flag defaults `false` and is boolean-coerced in `setSettings`, so a non-flipped
+  deployment routes to legacy `/users`/`/userRoles` byte-for-byte unchanged (the shared-bundle safety
+  requirement of D-048). Production `client/dist` rebuilt to embed the source change (KEPT for commit,
+  per the established client-feature dist pattern N-083).

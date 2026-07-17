@@ -4,6 +4,7 @@ import { MatDialog as MatDialog, MatDialogRef as MatDialogRef } from '@angular/m
 
 import { ProjectService } from '../../_services/project.service';
 import { AppService } from '../../_services/app.service';
+import { SettingsService } from '../../_services/settings.service';
 
 import { ChartConfigComponent } from '../../editor/chart-config/chart-config.component';
 import { GraphConfigComponent } from '../../editor/graph-config/graph-config.component';
@@ -29,6 +30,7 @@ export class SetupComponent {
                 public dialog: MatDialog,
                 private projectService: ProjectService,
                 private plugins: PluginService,
+                private settings: SettingsService,
                 public dialogRef: MatDialogRef<SetupComponent>) {
 
         this.router.routeReuseStrategy.shouldReuseRoute = function() { return false; };
@@ -49,6 +51,19 @@ export class SetupComponent {
             queryParams: { type: type }
         };
         this.router.navigate([destination], navigationExtras);
+    }
+
+    /**
+     * D-048: route the Users entry to the module page (`/auth/users`) when the auth-management module
+     * SUPERSEDE is active, else FUXA's built-in `/users` (legacy, non-flipped deployments unchanged).
+     */
+    goToUsers() {
+        this.goTo(this.settings.getSettings()?.authModuleEnabled ? '/auth/users' : '/users');
+    }
+
+    /** D-048: route the User-Roles entry to the module `/auth/roles` under SUPERSEDE, else `/userRoles`. */
+    goToUserRoles() {
+        this.goTo(this.settings.getSettings()?.authModuleEnabled ? '/auth/roles' : '/userRoles');
     }
 
     /**
