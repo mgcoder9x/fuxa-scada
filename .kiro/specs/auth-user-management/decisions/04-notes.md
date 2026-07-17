@@ -1291,3 +1291,44 @@
 - **(A) Authenticated QA sweep — clean.** Logged in as `admin` (reset pw), swept 19 routes (`/,/editor,/lab,/view,/alarms,/device,/reports,/scripts,/notifications,/messages,/logs,/events,/language,/apikeys,/userRoles,/mapsLocations,/arMarkers,/auth/users,/auth/rotate-password`) with page-level listeners: **every route = 0 console errors, 0 pageerrors, 0 HTTP≥400, no redirect-to-login (admin authz everywhere), no external hosts.** This validates that the cumulative live changes (stage-4 flip + TO-014 npm-audit-fix + DV-012 console hygiene + i18n 12-locale + Node pin) introduced NO regression on the real instance.
 - **(B) CSP feasibility — VERIFIED, changes the recommendation.** Investigated whether the offered CSP compensating-control is viable. Findings (evidence, not assumption): (1) server sets NO security headers today (grep: no helmet/CSP/X-Frame-Options/setHeader in `server/**`). (2) shipped `client/dist/index.html` contains an **inline `<script>`** (viewport/orientation, uses `document.write`), inline `onload="this.media='all'"` **event-handler attributes** on `<link>`, and large inline `<style>` blocks (Angular Material). (3) `client/src/app/_services/script.service.ts` runs user scripts via **`eval(callText)` / `eval(asyncScript)`** — FUXA's client scripting feature. CONSEQUENCE: a CSP strong enough to mitigate XSS (no `script-src 'unsafe-inline' 'unsafe-eval'`) would BREAK the scripting feature + the inline bootstrap/handlers; a CSP that keeps `'unsafe-inline' 'unsafe-eval'` gives essentially NO XSS protection = security theater. A genuine CSP therefore requires a real refactor (externalize the inline script + `onload` handlers → nonce/hash; replace `eval` with a sandboxed evaluator) — a separate, higher-risk mini-project best paired with the deferred Angular hardening sprint (N-079).
 - **Recommendation (precise, updated):** do NOT add a CSP now. Instead add the SAFE, non-CSP headers that cannot break FUXA: `X-Content-Type-Options: nosniff` and `Referrer-Policy` (zero functional/embedding risk). HOLD `X-Frame-Options`/`frame-ancestors` pending the user's embedding decision (FUXA views may be legitimately iframed into external dashboards → clickjacking-protection vs embedding is a genuine either/or). Defer real CSP to the refactor sprint. All are FUXA-core `server/main.js` edits (D-003 deviation class) → proposed, pending user OK per the security-change + one-step rules.
+
+### N-081: Cross-machine reconciliation at HEAD c45ab1c — stale-context parallel re-derivation (N-060 class) + N-080 high-water fix
+- Date: 2026-07-17
+- Phase: Reconciliation (session on machine `toann`, reading the machine `k.nguyen.manh.toan` handoff `end.md`)
+- Status: Active — reconciled; no work lost; drifts remediated
+- Links: N-060 (same class), N-074..N-080, D-043/D-044/D-045, `end.md`, `00-INDEX §3`
+- What happened: a session on machine `toann` resumed from a STALE context summary (believed repo HEAD
+  `197e9aa`, Stage-4 "approval-gated / not done", high-water ~N-073) and, over several turns, RE-DERIVED
+  in the local working tree the D-043 Stage-2 flag-gated SUPERSEDE wiring (`mountDeferredAuthModule`
+  deferred-proxy + `init-users-ok` sequencing), the D-044 sign-in RBAC→FUXA projection, and the D-045
+  forced-rotation UI — INCLUDING browser-verifying them on an isolated temp instance.
+- Reality (verified from `git log`/`git show` this session, NOT from memory): the repo is at HEAD
+  **`c45ab1c`**, SEVEN commits ahead of `197e9aa`. The machine `k.nguyen.manh.toan` had ALREADY done and
+  COMMITTED the canonical equivalents and far more: `d83b29d` STAGE-4 FLIP LIVE (D-043/D-044/D-045,
+  server 170 / client 74, N-074/N-075), `723603b` npm-audit safe patch (TO-014, PROD vulns 15→10,
+  N-076), `c291b30` live browser-verified flip (N-077), `40b7dbf` FUXA-core console hygiene (DV-012,
+  N-078), `c6efe74` i18n 12-locale fill + Node pin (TO-016, N-079), `c45ab1c` QA sweep + CSP verdict
+  (N-080). VERIFIED the committed tree contains my exact re-derivation: `server/api/index.js` has
+  `mountDeferredAuthModule`, `client/src/app/auth-management/rotate-password/**` (5 files) + D-045 are
+  committed. So NOTHING is lost — the local re-derivation was superseded by the committed canonical
+  work when this machine advanced to `c45ab1c`; the local uncommitted copies are gone and the working
+  tree is clean.
+- Root cause: SAME as N-060 — a context-compaction summary carried an outdated high-water/commit and the
+  resuming agent trusted it instead of re-reading `00-INDEX §2` + `git log`/`git status` against the true
+  on-disk state BEFORE working. Cross-machine handoff amplifies this: the other machine kept advancing +
+  pushing while this machine's summary was frozen at an old point.
+- Remediation: (1) No committed drift — the parallel local work was never committed (superseded on
+  pull/checkout to `c45ab1c`); nothing to revert. (2) Recorded here. (3) Fixed a REAL committed
+  inconsistency left by the other machine: N-080 note was committed at `c45ab1c` but `00-INDEX §2`
+  high-water still read `N-`→079; bumped to reflect N-080 + this N-081. (4) Reinforced the resume rule
+  (already in N-060): on ANY resume, re-read `00-INDEX §2` high-water + run `git log -1`/`git status`
+  and trust the on-disk/committed state over the conversation summary.
+- Current true state (verified): feature auth-user-management is DONE + LIVE + committed through the
+  Stage-4 SUPERSEDE flip and post-flip hardening; high-water D→045, DV→012, TO→016, N→081, P→016.
+  THIS machine's `_appdata/settings.js` has `secureEnabled:true` but NO `authModuleEnabled` → the
+  module SUPERSEDE is NOT flipped on THIS machine's local runtime (per-machine, not git-tracked); the
+  other machine's DB was flipped (admin rotated to an unknown pw, N-077). Open forward items from N-080:
+  CSP is DEFERRED (evidence-based: FUXA uses `eval()` for user scripts + inline `<script>`/`onload=`
+  handlers/inline `<style>` in `index.html`, so a real no-`unsafe-inline`/`unsafe-eval` CSP would break
+  the app; a meaningful CSP needs a refactor sub-project). Proposed next (user-leaning): UI/UX navigator
+  + account-management pages.
