@@ -10,6 +10,9 @@ import { SessionStore } from './session.store';
  */
 export const USER_READ = 'user.read';
 
+/** Permission the Role-Management route requires (AC-9.2 / D-046). */
+export const ROLE_READ = 'role.read';
+
 /**
  * The subset of a Role definition needed to resolve permissions client-side.
  * Full contract: `Role { id, name, permissions[] }` (design/05 §3; §08 §2.4 `RoleAdminClient`).
@@ -81,5 +84,10 @@ export class ModulePermissionService {
     /** Convenience for the management-route gate (AC-12.6). */
     canReadUsers(): boolean {
         return this.hasPermission(USER_READ);
+    }
+
+    /** Convenience for the Role-Management route gate (D-046). */
+    canReadRoles(): boolean {
+        return this.hasPermission(ROLE_READ);
     }
 }

@@ -1,0 +1,19 @@
+/* Minimal Role-Management styling (design/05 §8.1 · REQ-9, D-046). Theme integration out of scope. */
+.auth-roles { max-width: 900px; margin: 0 auto; padding: 12px; }
+.auth-roles__status { padding: 12px; opacity: 0.8; }
+.auth-roles__header { display: flex; align-items: center; justify-content: space-between; }
+.auth-roles__title { font-size: 1.2rem; margin: 0; }
+.auth-roles__actions button { margin-left: 8px; padding: 6px 12px; cursor: pointer; }
+.auth-roles__error { min-height: 1.2em; color: #b00020; }
+.auth-roles__form { border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin: 12px 0; }
+.auth-roles__field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.auth-roles__field input { padding: 8px; box-sizing: border-box; width: 100%; }
+.auth-roles__field input[readonly] { background: #f2f2f2; }
+.auth-roles__perms { display: flex; flex-wrap: wrap; gap: 8px 16px; border: 1px solid #eee; border-radius: 4px; }
+.auth-roles__perm { display: flex; align-items: center; gap: 4px; }
+.auth-roles__form-actions button { margin-right: 8px; padding: 6px 12px; cursor: pointer; }
+.auth-roles__form-actions button[disabled] { cursor: not-allowed; opacity: 0.6; }
+.auth-roles__table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.auth-roles__table th, .auth-roles__table td { border: 1px solid #eee; padding: 8px; text-align: left; }
+.auth-roles__confirm { border: 1px solid #b00020; border-radius: 4px; padding: 12px; margin-top: 12px; }
+.auth-roles__confirm button { margin-right: 8px; padding: 6px 12px; cursor: pointer; }

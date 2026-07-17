@@ -7,6 +7,9 @@
 -->
 <section class="auth-users" [attr.aria-busy]="loading">
 
+    <!-- Shared in-area navigator Users | Roles (D-046) -->
+    <app-auth-nav></app-auth-nav>
+
     <!-- AC-12.6 gate while resolving access -->
     <div class="auth-users__checking" *ngIf="access === 'checking'">
         {{ 'msg.loading' | translate }}

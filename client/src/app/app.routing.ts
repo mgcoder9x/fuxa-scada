@@ -27,6 +27,7 @@ import { ArViewComponent } from './ar/ar-view/ar-view.component';
 import { LoginComponent } from './auth-management/login/login.component';
 import { UserManagementComponent } from './auth-management/user-management/user-management.component';
 import { RotatePasswordComponent } from './auth-management/rotate-password/rotate-password.component';
+import { RoleManagementComponent } from './auth-management/role-management/role-management.component';
 
 const appRoutes: Routes = [
     { path: '', component: HomeComponent},//, canActivate: [AuthGuard] },
@@ -65,6 +66,8 @@ const appRoutes: Routes = [
     // signed-in account is `mustRotate`; no AuthGuard (like auth/login) — the page requires a session
     // and redirects to auth/login if absent.
     { path: 'auth/rotate-password', component: RotatePasswordComponent },
+    // Role-Management page (REQ-9, D-046). No AuthGuard (like auth/users); UX gate + server §05 authorize.
+    { path: 'auth/roles', component: RoleManagementComponent },
 
     // otherwise redirect to home
     { path: '**', redirectTo: '' }

@@ -1,0 +1,98 @@
+<!--
+  Role-Management page (design/05 §8.1 · REQ-9, D-046).
+  - access gate (checking | granted | denied); denied renders a translated i18n key only.
+  - list table (id / name / permissions / actions) + Create; create/edit form with permission
+    checkboxes; delete-confirm. No server text rendered — error region renders a translated KEY.
+-->
+<div class="auth-roles">
+    <app-auth-nav></app-auth-nav>
+
+    <ng-container [ngSwitch]="access">
+
+        <!-- checking -->
+        <div *ngSwitchCase="'checking'" class="auth-roles__status">{{ 'msg.loading' | translate }}</div>
+
+        <!-- denied -->
+        <div *ngSwitchCase="'denied'" class="auth-roles__error" role="alert" aria-live="assertive">
+            {{ (errorKey || 'msg.signin-unauthorized') | translate }}
+        </div>
+
+        <!-- granted -->
+        <div *ngSwitchCase="'granted'">
+            <div class="auth-roles__header">
+                <h1 class="auth-roles__title">{{ 'roles.title' | translate }}</h1>
+                <div class="auth-roles__actions">
+                    <button type="button" (click)="openCreate()">{{ 'roles.add' | translate }}</button>
+                    <button type="button" (click)="refresh()">{{ 'general.refresh' | translate }}</button>
+                </div>
+            </div>
+
+            <div class="auth-roles__error" role="alert" aria-live="assertive">
+                <span *ngIf="errorKey">{{ errorKey | translate }}</span>
+            </div>
+
+            <!-- create / edit form -->
+            <div *ngIf="formMode" class="auth-roles__form">
+                <h2>{{ (formMode === 'create' ? 'roles.add' : 'roles.edit') | translate }}</h2>
+
+                <div class="auth-roles__field">
+                    <label for="role-id">{{ 'roles.id' | translate }}</label>
+                    <input id="role-id" type="text" [(ngModel)]="formId" [readonly]="formMode === 'edit'" />
+                </div>
+                <div class="auth-roles__field">
+                    <label for="role-name">{{ 'roles.name' | translate }}</label>
+                    <input id="role-name" type="text" [(ngModel)]="formName" [readonly]="formMode === 'edit'" />
+                </div>
+
+                <fieldset class="auth-roles__perms">
+                    <legend>{{ 'roles.permissions' | translate }}</legend>
+                    <label *ngFor="let p of availablePermissions()" class="auth-roles__perm">
+                        <input type="checkbox" [checked]="hasPermission(p)" (change)="togglePermission(p, $event)" />
+                        {{ p }}
+                    </label>
+                </fieldset>
+
+                <div class="auth-roles__form-actions">
+                    <button type="button" (click)="submitForm()" [disabled]="!canSubmit()" [attr.aria-busy]="savePending">
+                        {{ 'general.save' | translate }}
+                    </button>
+                    <button type="button" (click)="closeForm()">{{ 'general.cancel' | translate }}</button>
+                </div>
+            </div>
+
+            <!-- list -->
+            <table class="auth-roles__table">
+                <caption>{{ 'roles.title' | translate }}</caption>
+                <thead>
+                    <tr>
+                        <th>{{ 'roles.id' | translate }}</th>
+                        <th>{{ 'roles.name' | translate }}</th>
+                        <th>{{ 'roles.permissions' | translate }}</th>
+                        <th>{{ 'general.actions' | translate }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr *ngFor="let role of roles; trackBy: trackById">
+                        <td>{{ role.id }}</td>
+                        <td>{{ role.name }}</td>
+                        <td>{{ permissionLabel(role) }}</td>
+                        <td>
+                            <button type="button" (click)="openEdit(role)">{{ 'roles.edit' | translate }}</button>
+                            <button type="button" (click)="openDelete(role)" [disabled]="deletePending">{{ 'roles.delete' | translate }}</button>
+                        </td>
+                    </tr>
+                    <tr *ngIf="!loading && roles.length === 0">
+                        <td colspan="4">{{ 'msg.no-data' | translate }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </ng-container>
+
+    <!-- delete confirm -->
+    <div *ngIf="deleteTarget" class="auth-roles__confirm" role="alertdialog" aria-live="assertive">
+        <p>{{ 'roles.delete-confirm' | translate }} <strong>{{ deleteTarget }}</strong></p>
+        <button type="button" (click)="confirmDelete()">{{ 'roles.delete' | translate }}</button>
+        <button type="button" (click)="cancelDelete()">{{ 'general.cancel' | translate }}</button>
+    </div>
+</div>

@@ -26,11 +26,12 @@ import { UserManagementPresenter, AccessState } from './user-management-presente
 import { UserFormComponent } from './user-form.component';
 import { UserFormMode, UserFormInitial } from './user-form-presenter';
 import { DeleteUserConfirmDialogComponent } from './delete-user-confirm-dialog.component';
+import { AuthNavComponent } from '../nav/auth-nav.component';
 
 @Component({
     selector: 'app-auth-user-management',
     standalone: true,
-    imports: [CommonModule, TranslateModule, UserFormComponent, DeleteUserConfirmDialogComponent],
+    imports: [CommonModule, TranslateModule, UserFormComponent, DeleteUserConfirmDialogComponent, AuthNavComponent],
     templateUrl: './user-management.component.html',
     styleUrls: ['./user-management.component.scss'],
 })

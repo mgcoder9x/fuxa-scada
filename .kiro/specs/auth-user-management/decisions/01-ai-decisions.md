@@ -668,3 +668,51 @@
   gating) + `normalizeRotateError`; production `ng build`; browser e2e on the stage-4 temp instance —
   fresh deploy → read console secret → login → auto-routed to `/auth/rotate-password` → rotate →
   redirected to login → sign in with the new password → full admin `/auth/users`; 0 console errors.
+
+### D-046: Role-Management page + Users|Roles navigator (Phase 1 of the auth-management UI area)
+- Date: 2026-07-17
+- Phase: Implementation (post-flip UI · REQ-9 client)
+- Status: Active (Phase 1 — module-only client, NO server/FUXA-core change; user-approved "proceed")
+- Links: REQ-9, D-036/DV-010/D-039, D-044, N-081, `role-admin.client.ts`, `roles.router.js`, `authorization.service.js`
+- Context: post-Stage-4, the module owns `/api/roles` (SUPERSEDE) and ships `RoleAdminClient`
+  (list/create/update/delete) but has NO Role-Management UI, and the 3 module pages
+  (login/rotate/users) have no navigator. FUXA's own `/users`+`/userRoles` (editor Setup menu) use
+  the pre-SUPERSEDE bare-array shape and are superseded by the module pages. (Investigation this
+  session; N-081.)
+- Statement (Phase 1, module-only): add a standalone Role-Management page + a shared in-area
+  navigator, reusing the exact patterns (pure presenter + jest [DV-010], thin client [D-036],
+  standalone component [D-039]):
+  1. **`RoleManagementPresenter`** (pure): access gate `canReadRoles` (`role.read`) →
+     checking/granted/denied (UX-only; server §05 is the real boundary); `listRoles`; create
+     `{id,name,permissions}`; update `{id, permissions}` (server PUT /api/roles/:id replaces the
+     permission set wholesale — id+name are IMMUTABLE via this endpoint, VERIFIED in role.service.js,
+     so edit exposes permissions only); delete by id (server prunes referencing users, returns
+     `{removed,prunedUsers}`); refresh-on-success; row-remove on delete; generic i18n error keys
+     (`duplicate_role`/`role_not_found`/`validation_error`/`forbidden`/`unauthorized_error`).
+  2. **Permission catalog** for the editor = the canonical `ADMIN_PERMISSION_SET` (VERIFIED in
+     `authorization.service.js`: `user.create/read/update/delete`, `role.create/read/update/delete`)
+     **UNION** any permission already present on a loaded role (so a custom/unknown perm is never
+     hidden). This is a CLIENT MIRROR of the server set — flagged drift risk; root-correct follow-up
+     = a server `GET /api/permissions` catalog endpoint (deferred, would be a small additive server
+     task). `account.rotatePassword` is intentionally EXCLUDED from the assignable list in Phase 1
+     (it is the self-service/gate permission; assigning it to a role is a Phase-3 "My Account"
+     concern).
+  3. **`RoleManagementComponent`** (standalone): wires `RoleAdminClient` + `ModulePermissionService`
+     (adds `ROLE_READ`+`canReadRoles()` — small mirror of `canReadUsers()`) into the presenter;
+     template = list table + create/edit form (permission checkboxes) + delete confirm.
+  4. **Navigator** `AuthNavComponent` (standalone): tabs **Users | Roles** via `routerLink`, rendered
+     atop `/auth/users` + `/auth/roles`; added to both page templates (module files, not FUXA-core).
+  5. **Route** `/auth/roles` (no AuthGuard, like `/auth/users`); **i18n** keys added to `en.json`.
+- Rationale: the roles client + server already exist and are verified; the only gap is the UI + a
+  navigator. Reuses the proven presenter/jest/standalone pattern → module-only, no server/FUXA-core
+  edit, fast to verify (jest + prod build + browser). Editing FUXA's Setup menu to route
+  Users/UserRoles → the module pages is DEFERRED to Phase 2 (FUXA-core touch, coordinated); "My
+  Account" self-service is Phase 3 (needs a server permission decision — no role grants
+  `account.rotatePassword` post-bootstrap, VERIFIED).
+- Alternatives considered: (a) reuse FUXA's `/userRoles` page (rejected: bare-array shape superseded
+  by the module envelope → broken under SUPERSEDE); (b) hardcode only the 8 perms with no union
+  (rejected: would hide custom perms already stored on roles); (c) server permission-catalog endpoint
+  now (deferred: additive server scope beyond Phase-1 module-only).
+- Verification: jest for the presenter (gate/list/create/update-permissions/delete/error-map/permission-catalog-union);
+  production `ng build`; browser e2e on a temp flipped instance (admin → /auth/roles → create role +
+  assign perms + edit perms + delete + navigator Users↔Roles; non-admin → denied); 0 console errors.

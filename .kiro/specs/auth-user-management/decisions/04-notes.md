@@ -1332,3 +1332,68 @@
   handlers/inline `<style>` in `index.html`, so a real no-`unsafe-inline`/`unsafe-eval` CSP would break
   the app; a meaningful CSP needs a refactor sub-project). Proposed next (user-leaning): UI/UX navigator
   + account-management pages.
+
+### N-082: VERIFIED live-flip SUPERSEDE defect — `/api/heartbeat` re-issues a FUXA token WITHOUT tokenVersion → module 401s the whole session
+- Date: 2026-07-17
+- Phase: Verification (browser QA of the D-046 roles page on a flipped temp instance)
+- Status: Active — OPEN DEFECT (affects the live Stage-4 flip; needs a fix + user approval, FUXA-core)
+- Links: D-014 (SUPERSEDE scope), D-015/D-027 (tokenVersion active revocation), N-042, N-077, `server/api/index.js` (`/api/heartbeat`), `client/_services/auth.service.ts`
+- How found: browser QA of `/auth/roles` on a flipped temp instance (authModuleEnabled+secureEnabled).
+  Create-role SUCCEEDED, then ~10s later edit/delete + every module request began returning 401.
+- Root cause (VERIFIED, not speculation — from decoded token claims + network trace):
+  - The client's stored token was `{ id:'admin', groups:-1, iat, exp }` — a FUXA-SHAPED token with
+    NO `tokenVersion`/`roles`/`type`/`jti`, i.e. NOT a module token (module tokens carry
+    `sub,groups,roles,tokenVersion,type,jti`).
+  - Network sequence proved the swap point: `#40 POST /api/roles→200` (create), `#41 GET /api/roles→200`,
+    **`#42 POST /api/heartbeat→200`**, then `#48 PUT /api/roles/operators→401`, `#49 GET /api/roles→401`,
+    `#50 GET /api/users→401`.
+  - FUXA's `/api/heartbeat` (server/api/index.js) re-issues a token via `authJwt.getNewTokenFromRequest`
+    (FUXA signer → `{id,groups,iat,exp}`, NO tokenVersion) and returns `{message:'tokenRefresh',token,data}`;
+    the FUXA client heartbeat handler adopts it via `AuthService.setNewToken` (overwrites the module
+    token in `currentUser`). Then the module authorization middleware (D-027) coerces the absent
+    `tokenVersion`→0 and, since the bootstrapped/rotated admin has `tokenVersion≥1` (here 2), computes
+    `0 < 2` ⇒ REVOKED ⇒ 401 on EVERY module endpoint. FUXA's own endpoints still accept the token
+    (groups:-1), so the session splits: FUXA OK, module 401.
+- Essence: **`/api/heartbeat` is an auth/token-minting surface that the D-014 SUPERSEDE never covered.**
+  D-014 covered signin/refresh/signout/users/roles but NOT heartbeat; post-flip the heartbeat's
+  ~10s-interval token refresh silently replaces the module token with a tokenVersion-less FUXA token
+  that the module then actively-revokes. So any module-page session outliving one heartbeat interval
+  breaks on its next module request. (N-077's quick flip check didn't exercise a cross-heartbeat module
+  write, so it wasn't caught.)
+- Impact: HIGH for the live flip — User-Management + Role-Management (any module write/read) fail with
+  401 after ~10s of an authenticated session. Not caused by the D-046 roles page (it merely surfaced it).
+- Fix options (to DESIGN + get approval — touches FUXA-core `/api/heartbeat`, security/token path):
+  (A) **Make heartbeat module-aware under SUPERSEDE** — when `authModuleEnabled`, the heartbeat token
+      re-issue must mint a MODULE-compatible token (carry the live `tokenVersion` + `roles`), e.g. delegate
+      to the module Token_Service / include the account's current tokenVersion. ROOT-correct (heartbeat
+      joins the SUPERSEDE), but a FUXA-core edit.
+  (B) Extend the module authorization to accept a FUXA-shaped token for identity while still enforcing
+      revocation — rejected: it guts D-027 (a tokenVersion-less token could never be revoked).
+  (C) Disable/skip the client heartbeat token-adoption under SUPERSEDE — leaf fix; breaks sliding-session
+      renewal and leaves two token models fighting.
+  Recommendation: (A) — bring `/api/heartbeat` into the SUPERSEDE so its refreshed token is a module
+  token (tokenVersion-stamped). Design + approval required (FUXA-core, security path) before implementing.
+
+### N-083: D-046 Phase-1 (Role-Management page + Users|Roles navigator) IMPLEMENTED + verified (browser-blocked edit/delete = N-082, not code)
+- Date: 2026-07-17
+- Phase: Implementation (post-flip UI · REQ-9 client)
+- Status: Active — code-complete + verified to the extent N-082 allows; NOT yet committed
+- Links: D-046, N-082, REQ-9, `auth-management/role-management/**`, `auth-management/nav/**`
+- Statement: built per D-046 — `RoleManagementPresenter` (pure, DV-010) + `RoleManagementComponent`
+  (standalone, D-039) + `AuthNavComponent` (Users|Roles) + route `/auth/roles` + `ROLE_READ`/`canReadRoles()`
+  on `ModulePermissionService` + i18n keys + nav added to the Users page. Permission catalog = client
+  mirror of server `ADMIN_PERMISSION_SET` (8) ∪ perms present on loaded roles (drift-flagged; follow-up =
+  server `GET /api/permissions`).
+- Verification: client `npx jest --runInBand` = **7 suites / 85 tests** (74 + 11 new role-presenter specs);
+  `npx ng build --configuration production` exit 0; diagnostics 0. BROWSER (Playwright, flipped temp
+  instance): `/auth/roles` renders with the navigator + empty table; Add-Role form shows the 8 sorted
+  permission checkboxes; **create role `operators`[user.read,user.update] SUCCEEDED** (row appeared; server
+  `GET /api/roles` confirms persistence); navigator Users↔Roles works. EDIT + DELETE in-browser were
+  BLOCKED by the N-082 heartbeat 401 (a pre-existing live-flip defect, NOT the roles code) — verified
+  edit(PUT)+delete(DELETE) work via API with a fresh module token (final `GET /api/roles`→`{data:[]}`),
+  and they are covered by the server suite (170) + presenter jest. So the roles CRUD plumbing is sound;
+  full browser edit/delete verification is pending the N-082 fix.
+- Cleanup: temp instance + `.playwright-mcp` + build/jest out files removed. `client/dist` was rebuilt
+  (contains the roles page) and is KEPT for the Phase-1 commit (matches the established dist-with-client
+  commit pattern). Phase 2 (route FUXA Setup menu → module pages) + Phase 3 (My Account self-service)
+  remain deferred (D-046).
