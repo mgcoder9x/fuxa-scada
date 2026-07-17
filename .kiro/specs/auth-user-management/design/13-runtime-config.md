@@ -56,9 +56,35 @@ issue/verify, so mutating that object hot-swaps token policy with zero refactor.
 (`passwordPolicy`, `BruteForceGuard`, bcrypt cost) snapshot at construction and get small, additive
 `reconfigure`/setter methods — all inside the module.
 
-**Fields that invalidate existing sessions when changed** (`jwtIssuer`, `jwtAudience`, `jwtAlgorithm`,
-and — if ever exposed — `secretCode`): NOT a brick (users simply re-login), but the UI MUST warn
-"changing this signs out all active sessions". Classified as "careful" above.
+**Fields that invalidate existing sessions when changed** (`jwtIssuer`, `jwtAudience`, `jwtAlgorithm`):
+NOT a brick (users re-login). See §12 for the zero-logout transition-window design that avoids the
+mass logout for `iss`/`aud`, and why `algorithm` deliberately does NOT overlap.
+
+---
+
+## 12. Token-signing changes — zero-logout transition window (UX, refinement 2026-07-17)
+
+Changing `iss`/`aud`/`alg` normally logs everyone out because `TokenService.verify` validates them on
+every request and existing tokens were signed with the old values. Expert mitigation:
+
+- **`jwtIssuer` / `jwtAudience` — OVERLAP WINDOW (zero forced logout, RECOMMENDED):** on change, keep
+  the OLD value in an "also-accept" set for a bounded window = the access-token TTL (e.g. 1h). `verify`
+  accepts a token whose `iss`/`aud` is EITHER old or new; new tokens are signed with the NEW value;
+  after the window the old value is dropped (lazily). Active users roll over on natural
+  refresh/expiry → nobody is kicked out. This reuses the TO-012 "keyring overlap" principle
+  (`kid`-style) applied to `iss`/`aud`. Cost: `verify` accepts a small set instead of a scalar + a
+  timestamped "old value expires at" record in `auth_config`.
+- **`jwtAlgorithm` — NO overlap (confirmed re-login):** accepting two algorithms simultaneously in
+  `verify` (`algorithms:[old,new]`) is a security smell (a downgraded/weak alg stays valid during the
+  window). Algorithm changes are near-never and security-critical, so this stays a deliberate,
+  confirmed event that ends all sessions (users re-login). UI shows an explicit confirm.
+- **UX grouping:** `iss`/`aud`/`alg` live in an "Advanced — Token signing" section, separate from the
+  daily policy (password / brute-force / token TTL) which has zero side effects. Each change shows a
+  dialog stating the exact effect ("no sign-out" for iss/aud overlap; "signs out all sessions" for alg).
+
+Adds one property refinement: **P-017a** — after an `iss`/`aud` change, a token signed under the OLD
+value still verifies until the transition window elapses, and a token signed under the NEW value
+verifies immediately; after the window, OLD-signed tokens no longer verify.
 
 ---
 
@@ -113,9 +139,14 @@ FUXA's settings-write path — a deliberate D-003 boundary choice).
 
 ## 5. Security
 
-- **Authorization:** add two permissions `settings.read`, `settings.manage` to the catalog and to
-  `ADMIN_PERMISSION_SET` (admins inherit them; other roles can be granted explicitly). Exactly the
-  additive pattern D-046 used for `role.read`. Routes gated by the existing `requirePermission`.
+- **Authorization (functional permission, per user model 2026-07-17):** the module's RBAC is
+  FUNCTION-permission based (`ADMIN_PERMISSION_SET` = `user.*`/`role.*` = capabilities). Add two
+  FUNCTIONAL permissions `settings.read`, `settings.manage` to the catalog and to
+  `ADMIN_PERMISSION_SET` (admins inherit; other roles grantable) — additive pattern of D-046
+  (`role.read`). Auth config is a SINGLE GLOBAL object, NOT per-row/per-tenant data, so the "data-
+  scoped" permission axis (which data a role may touch) does NOT apply here — a functional permission
+  is the correct and complete model for this feature. (Data-scoped RBAC is a separate, larger axis,
+  out of D-049 scope.) Routes gated by the existing `requirePermission`.
 - **Strict validation (P-018), reject → 400, no partial apply:**
   - `passwordMinLength` ∈ [8, 128] (bounded so it can neither weaken policy below 8 nor lock out via
     an absurd minimum); only affects NEW passwords, existing users unaffected.
@@ -191,9 +222,10 @@ additive and ignorable. "Reset to defaults" deletes the override row.
 
 1. **Config field scope** — approve the §2 in-scope set (password policy + brute-force + token/JWT +
    bcryptCost), and `authModuleEnabled`/`secretCode` staying restart-/secure-path only. Add/remove any?
-2. **Permission model** — new `settings.read`/`settings.manage` in `ADMIN_PERMISSION_SET` (admin-only
-   by default). OK, or admin-hardcoded only (no new permission)?
-3. **"Careful" fields** (`jwtIssuer/jwtAudience/jwtAlgorithm`) — expose with a "signs out everyone"
-   warning, or exclude from the runtime surface for now?
+2. **Permission model** — RESOLVED (user 2026-07-17): functional permissions `settings.read`/
+   `settings.manage` in `ADMIN_PERMISSION_SET`; data-scoped axis N/A for a global config object (§5).
+3. **"Careful" fields** — RESOLVED direction (user 2026-07-17): `iss`/`aud` use the §12 zero-logout
+   overlap window; `alg` stays a confirmed re-login event (no overlap, security). Grouped under
+   "Advanced — Token signing". Confirm building the overlap window now vs deferring it (fields rarely change).
 4. **Persistence home** — module DB `auth_config` table (recommended; keeps `settings.js` untouched).
    Confirm vs writing back into `settings.js` via FUXA's settings path.
