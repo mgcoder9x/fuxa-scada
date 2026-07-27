@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "name": "Auth Module — Anti-Drift Gate (mechanical)",
+  "description": "Runs the DETERMINISTIC anti-drift checker (.kiro/specs/auth-user-management/tools/anti-drift-check.js) whenever a spec/ledger file is saved. Unlike the two askAgent hooks, this one does not depend on an agent looking: it exits non-zero on a real failure. It catches the drift modes that actually happened — ledger overwrite (N-020), duplicate/deleted ids (N-060), a stale high-water while properties shipped (N-094), and a decision that shipped with no traceability/task row (N-094). READ-ONLY, so it cannot self-trigger the N-034 loop.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      ".kiro/specs/auth-user-management/decisions/*.md",
+      ".kiro/specs/auth-user-management/tasks.md",
+      ".kiro/specs/auth-user-management/requirements.md",
+      ".kiro/specs/auth-user-management/design.md",
+      ".kiro/specs/auth-user-management/design/*.md"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "node .kiro/specs/auth-user-management/tools/anti-drift-check.js",
+    "timeout": 60
+  }
+}

@@ -120,6 +120,37 @@ deep review opened).
 
 **New properties since G3:** P-017…P-020 all owned by task 20.1 (D-049). No Phase-2 property is orphaned.
 
+### D.3 Decision → realization map (added 2026-07-27 — completes 100 % `D-*` coverage)
+
+> **Why.** The mechanical guard `tools/anti-drift-check.js` (added 2026-07-27, N-095) enforces that EVERY
+> `D-*` entry is reachable from `traceability.md` or `tasks.md`. Measured at the time: 51 decisions, of
+> which **14 were reachable from neither** — so the rule was unenforceable without either an exemption
+> allowlist (itself drift-prone: an allowlist rots silently and hides exactly what it excuses) or this
+> table. The table was chosen: it states, per decision, WHERE the decision is realized, so coverage is
+> complete with **zero exemptions** and the guard can be strict. Three of the fourteen turned out to be
+> genuine implementation work that had never been traced at all (D-040, D-041, D-045) — evidence that the
+> gap was not merely cosmetic.
+
+| Decision | Kind | Where it is realized / why it owns no single task |
+|----------|------|--------------------------------------------------|
+| `D-040` | **Implementation (FUXA-core, outside the auth D-003 boundary)** | Top-level SPA `index.html` catch-all in `server/main.js`, fixing the N-052 deep-route 404 on ~13 client routes. Verified: 13 routes 404→200, `/alarms` renders with 0 console errors, API/assets unaffected (N-052/N-053). Platform fix, user-authorized; no auth requirement owns it |
+| `D-041` | **Implementation (FUXA-core, outside the auth boundary)** | `server/main.js` Node-RED enabled-without-mode default hardened `legacy-open`→`secure` (enacts TO-015, fixes the N-054 footgun). Verified by the pre-existing `server/test/authorization/nodeRedSecurity.test.js` (both modes) + absence of any `legacy-open` default |
+| `D-045` | **Implementation (client, REQ-17)** | Forced first-login rotation UI: `auth-management/rotate-password/` presenter + standalone page + `RotatePasswordClient`, and the `mustRotate` field on the sign-in payload. Tests: `rotate-password-presenter.spec.ts` (9 specs) + browser e2e secret→login→auto-route→rotate→re-login (N-073). Closes N-072. **Was untraced until this table** |
+| `D-043` | Staged plan (superseded by execution) | The 4-stage Option-1 SUPERSEDE plan. Its stages were executed as D-044 (payload projection), D-045 (rotation UI), N-067 (enrollment console), N-068/N-071 (deferred-proxy mount) and the N-074 flip. Kept for provenance; no task of its own by design |
+| `D-001` | Architecture constraint | The four-layer split (UI/API/Service/Store) is realized by the STRUCTURE of every design section (`design/01`…`13`) and every task; asserted structurally by the layering tests (e.g. `authentication.service.test.js` asserts no bcrypt/jwt import in the service layer) |
+| `D-002` | Architecture constraint | "Reuse FUXA's primitives" is realized by the three adapters (tasks 2.3/2.4, 3.1, 5.1) — `DES-STORE`/`DES-TOKEN` rows above are its concrete trace |
+| `D-004` | Requirements constraint | The requirements-analysis auto-resolutions were folded INTO `requirements.md` itself (§B covers those ACs); it produces no code |
+| `D-005` | Superseded proposal | The historical bootstrap proposal; superseded by `D-012` + REQ-17, traced via `DES-BOOTSTRAP` (tasks 12.x) |
+| `D-010` | Design fix realized in an adapter | The double-hash resolution (write the bcrypt hash verbatim, bypassing `setUser` re-hash) is implemented in `FuxaUserStoreAdapter` — tasks 2.3/2.4, covered by the `DES-STORE` row + `store.*` tests |
+| `D-012` | Design fix realized in bootstrap | Random one-time seed secret + `mustRotate` gate (eliminates N-007) + migration remediation — tasks 12.1/12.3, covered by `DES-BOOTSTRAP` + **P-009/P-010** |
+| `D-013` | Policy set | Referenced from `tasks.md` (12.3 mandatory remediation; the "no self-deletion ban" note); D-013(1) is realized by task 12.3, D-013(3) by the deliberate absence of a task |
+| `D-038` | Build/verify convention | "The canonical client build is `ng build --configuration production`" — a process rule enforced by every client task's verification step (cited throughout `tasks.md`), not by product code |
+| `D-042` | Approach choice (superseded by execution) | The Option-1-vs-2 cutover choice; the chosen Option 2 is realized by task 17.4 (module login via FUXA `AuthService.signIn`) and later completed by D-044 |
+| `D-044` | Implementation (server, traced via task 13.5/17.4) | Sign-in payload projects RBAC onto FUXA's session shape (`groups`/`info`); referenced from `tasks.md` 17.4/18 and exercised live by task 21's matrix (`operator1` → `groups:0`, admin → `groups:-1`) |
+
+**Coverage invariant (machine-checked):** `tools/anti-drift-check.js` fails if any `D-*` heading is absent
+from both `traceability.md` and `tasks.md`. With §D.2 + §D.3 the current coverage is **51/51**.
+
 ## E. Orphan and phase-gate check (current)
 
 - Requirements with no design mapping: **none** (all REQ-1..17 mapped above).

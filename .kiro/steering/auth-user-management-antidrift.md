@@ -66,6 +66,22 @@ Drift is prevented by five overlapping layers so no single missed step lets it t
    read-only (reports only; edits nothing) so it cannot loop; on a FAIL it stops and asks the user.
 5. **On-demand deep audit hook — `Auth Module — Anti-Drift Audit` (`userTriggered`).** The full
    manifest + high-water + orphan + defect-register audit, run manually before a phase transition.
+6. **MECHANICAL gate — `tools/anti-drift-check.js` + the `Auth Module — Anti-Drift Gate` hook
+   (`fileEdited` → `runCommand`), added 2026-07-27 (N-095).** Layers 1–5 all depend on an agent or a
+   human *choosing to look*; every drift that actually happened (N-020 ledger overwrite, N-060
+   duplicate id, N-081 cross-machine re-derivation, N-094 stale `P-` high-water + six decisions that
+   shipped with no plan/traceability row) got through because the looking did not happen at the right
+   moment. This layer decides the same questions deterministically and **exits non-zero**, so the
+   answer no longer depends on remembering. Run it yourself at any time:
+   `node .kiro/specs/auth-user-management/tools/anti-drift-check.js`.
+   It enforces: §1 markers per file · §2 high-water EQUALS the ledger's real maximum · ids unique +
+   gapless · **every `D-*` reachable from `traceability.md` or `tasks.md` with NO exemption list** ·
+   the highest `P-*` referenced by design/tests ≤ the manifest high-water · no chat-transcript markers
+   inside a ledger file · `TO-003` still quarantined. It is READ-ONLY (cannot loop, cf. N-034), and it
+   was verified to actually FAIL on injected versions of three real drift modes — a checker that
+   cannot fail is worthless. **If it reports FAIL, stop and fix the ledger/traceability before
+   continuing.** What it deliberately does NOT do: judge whether a decision is *good*, whether a
+   traced test asserts anything real, or run the suites — a green gate is not proof of correctness.
 
 **Golden rule restated:** ledger files are append-only; fix the root cause; verify every FUXA claim
 against source; one step at a time with a precise, factual reason. When in doubt, STOP and ask —
