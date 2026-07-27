@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "A palavra-passe deve ter pelo menos {{min}} caracteres",
+    "msg.password-too-long": "A palavra-passe não deve exceder {{max}} bytes",
+    "msg.password-blocklisted": "Esta palavra-passe é demasiado comum. Escolha outra.",
+    "msg.password-malformed": "A palavra-passe contém caracteres inválidos",
     "msg.signin-unauthorized": "Não autorizado!",
     "signin.username": "Utilizador",
     "signin.password": "Palavra-passe",

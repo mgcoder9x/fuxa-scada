@@ -22,7 +22,8 @@
             <div class="auth-roles__header">
                 <h1 class="auth-roles__title">{{ 'roles.title' | translate }}</h1>
                 <div class="auth-roles__actions">
-                    <button type="button" (click)="openCreate()">{{ 'roles.add' | translate }}</button>
+                    <!-- D-051: offered only with role.create (server still enforces) -->
+                <button type="button" *ngIf="canCreateRoles" (click)="openCreate()">{{ 'roles.add' | translate }}</button>
                     <button type="button" (click)="refresh()">{{ 'general.refresh' | translate }}</button>
                 </div>
             </div>
@@ -77,8 +78,8 @@
                         <td>{{ role.name }}</td>
                         <td>{{ permissionLabel(role) }}</td>
                         <td>
-                            <button type="button" (click)="openEdit(role)">{{ 'roles.edit' | translate }}</button>
-                            <button type="button" (click)="openDelete(role)" [disabled]="deletePending">{{ 'roles.delete' | translate }}</button>
+                            <button type="button" *ngIf="canUpdateRoles" (click)="openEdit(role)">{{ 'roles.edit' | translate }}</button>
+                            <button type="button" *ngIf="canDeleteRoles" (click)="openDelete(role)" [disabled]="deletePending">{{ 'roles.delete' | translate }}</button>
                         </td>
                     </tr>
                     <tr *ngIf="!loading && roles.length === 0">

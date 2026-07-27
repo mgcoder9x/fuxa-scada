@@ -26,7 +26,8 @@
         <header class="auth-users__header">
             <h1 class="auth-users__title">{{ 'users.title' | translate }}</h1>
             <span class="auth-users__actions-top">
-                <button class="auth-users__create" type="button" (click)="openCreate()">
+                <!-- D-051: offered only when the identity holds user.create (server still enforces) -->
+                <button class="auth-users__create" type="button" *ngIf="canCreateUsers" (click)="openCreate()">
                     {{ 'users.add-title' | translate }}
                 </button>
                 <button class="auth-users__refresh" type="button" (click)="refresh()" [disabled]="loading">
@@ -75,10 +76,12 @@
                     <td>{{ user.username }}</td>
                     <td>{{ user.fullname }}</td>
                     <td>{{ roleLabel(user) }}</td>
+                    <!-- D-051: each action appears only if the identity holds the matching permission,
+                         so the UI never advertises an operation the server will refuse (N-091 L5). -->
                     <td class="auth-users__row-actions">
-                        <button type="button" [attr.aria-label]="('users.edit-title' | translate) + ' ' + user.username"
+                        <button *ngIf="canUpdateUsers" type="button" [attr.aria-label]="('users.edit-title' | translate) + ' ' + user.username"
                                 (click)="openEdit(user)">{{ 'general.edit' | translate }}</button>
-                        <button type="button" [attr.aria-label]="('general.remove' | translate) + ' ' + user.username"
+                        <button *ngIf="canDeleteUsers" type="button" [attr.aria-label]="('general.remove' | translate) + ' ' + user.username"
                                 (click)="openDelete(user)">{{ 'general.remove' | translate }}</button>
                     </td>
                 </tr>

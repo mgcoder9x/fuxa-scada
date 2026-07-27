@@ -37,6 +37,7 @@ export class RoleManagementComponent implements OnInit {
         this.presenter = new RoleManagementPresenter({
             canReadRoles: () => permissions.canReadRoles(),
             permissionCatalog: () => permissions.permissionCatalog(), // D-050: server-owned vocabulary
+            can: (permission) => permissions.hasPermission(permission), // D-051: honest action affordances
             listRoles: () => roles.list(),
             createRole: (input) => roles.create(input),
             updateRole: (id, perms) => roles.update(id, perms),
@@ -58,6 +59,10 @@ export class RoleManagementComponent implements OnInit {
     get deletePending(): boolean { return this.presenter.deletePending; }
     get errorKey(): string | null { return this.presenter.errorKey; }
     get formMode(): RoleFormMode | null { return this.presenter.formMode; }
+    /** D-051: action affordances gated on effective permissions (server still enforces). */
+    get canCreateRoles(): boolean { return this.presenter.canCreateRoles; }
+    get canUpdateRoles(): boolean { return this.presenter.canUpdateRoles; }
+    get canDeleteRoles(): boolean { return this.presenter.canDeleteRoles; }
 
     get formId(): string { return this.presenter.formId; }
     set formId(v: string) { this.presenter.formId = v; }

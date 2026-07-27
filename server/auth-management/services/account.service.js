@@ -30,7 +30,7 @@
  *   - audits the credential change as a `user.update` event (secret-free — AC-14.2/14.5).
  */
 
-const { validatePasswordPolicy, resolvePasswordPolicy } = require('./password-policy');
+const { validatePasswordPolicyDetailed, resolvePasswordPolicy, PASSWORD_REJECTION_CODES } = require('./password-policy');
 
 class AccountService {
     /**
@@ -114,14 +114,25 @@ class AccountService {
         // The new secret must differ from the current one (no-op "rotation" would leave the one-time
         // secret usable) and pass the shared password policy (D-034).
         if (typeof newPassword !== 'string' || newPassword === '') {
-            return { kind: 'invalid_new', error: 'weak_or_reused_password', detail: 'new password is required' };
+            // D-051: `detail` unchanged; `detailCode`/`detailParams` added for a translatable UI message.
+            return {
+                kind: 'invalid_new', error: 'weak_or_reused_password', detail: 'new password is required',
+                detailCode: PASSWORD_REJECTION_CODES.required, detailParams: {},
+            };
         }
         if (newPassword === currentPassword) {
-            return { kind: 'invalid_new', error: 'weak_or_reused_password', detail: 'new password must differ from the current password' };
+            return {
+                kind: 'invalid_new', error: 'weak_or_reused_password',
+                detail: 'new password must differ from the current password',
+                detailCode: 'password_reused', detailParams: {},
+            };
         }
-        const detail = validatePasswordPolicy(newPassword, this.passwordPolicy);
-        if (detail) {
-            return { kind: 'invalid_new', error: 'weak_or_reused_password', detail };
+        const rejection = validatePasswordPolicyDetailed(newPassword, this.passwordPolicy);
+        if (rejection) {
+            return {
+                kind: 'invalid_new', error: 'weak_or_reused_password', detail: rejection.message,
+                detailCode: rejection.code, detailParams: rejection.params,
+            };
         }
 
         // Persist: new hash (verbatim, no double-hash), clear the gate, and bump tokenVersion so

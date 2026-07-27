@@ -40,7 +40,12 @@ function createAccountRouter(deps) {
             case 'bad_current':
                 return res.status(400).json({ error: outcome.error, message: 'Current password is incorrect' });
             case 'invalid_new':
-                return res.status(400).json({ error: outcome.error, message: outcome.detail });
+                // D-051: additive machine-readable reason (message unchanged) so the rotate page can
+                // tell the user WHICH rule failed, translated (N-091 L2).
+                return res.status(400).json({
+                    error: outcome.error, message: outcome.detail,
+                    detailCode: outcome.detailCode, detailParams: outcome.detailParams,
+                });
             default:
                 return res.status(400).json({ error: 'unexpected_error', message: 'Unexpected rotate outcome' });
         }

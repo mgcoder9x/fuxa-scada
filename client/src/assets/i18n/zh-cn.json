@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "密码长度至少为 {{min}} 个字符",
+    "msg.password-too-long": "密码不得超过 {{max}} 字节",
+    "msg.password-blocklisted": "该密码过于常见，请选择其他密码。",
+    "msg.password-malformed": "密码包含无效字符",
     "signin.username": "用户名",
     "signin.password": "密码",
     "signin.submit": "登录",

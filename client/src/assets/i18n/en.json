@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "Password must be at least {{min}} characters",
+    "msg.password-too-long": "Password must not exceed {{max}} bytes",
+    "msg.password-blocklisted": "This password is too common. Choose a different one.",
+    "msg.password-malformed": "Password contains invalid characters",
     "with param": "sample {{value}}",
 
     "app.home": "Home",

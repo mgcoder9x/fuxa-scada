@@ -87,6 +87,11 @@ export interface RoleManagementSeams {
      * becomes grantable without a client change — the root fix for the N-091 L3 mirror drift.
      */
     permissionCatalog?: () => string[];
+    /**
+     * Optional (D-051): does the identity hold an arbitrary permission? Used to offer only the actions
+     * it can perform (`role.create`/`role.update`/`role.delete`). Omitted ⇒ all offered, server enforces.
+     */
+    can?: (permission: string) => boolean;
     listRoles: () => Observable<RoleOption[]>;
     createRole: (input: { id: string; name: string; permissions: string[] }) => Observable<RoleOption>;
     updateRole: (id: string, permissions: string[]) => Observable<RoleOption>;
@@ -255,4 +260,18 @@ export class RoleManagementPresenter {
     permissionLabel(role: RoleOption): string {
         return Array.isArray(role.permissions) ? role.permissions.join(', ') : '';
     }
+
+    // --- Action capabilities (D-051, N-091 L5) -------------------------------
+    // UX affordances only; the server authorizes every mutation. Absent seam ⇒ offer everything.
+
+    private allowed(permission: string): boolean {
+        return this.seams.can ? this.seams.can(permission) === true : true;
+    }
+
+    /** May the identity create roles (`role.create`)? Drives "Add Role". */
+    get canCreateRoles(): boolean { return this.allowed('role.create'); }
+    /** May the identity edit roles (`role.update`)? Drives the row "Edit". */
+    get canUpdateRoles(): boolean { return this.allowed('role.update'); }
+    /** May the identity delete roles (`role.delete`)? Drives the row "Delete". */
+    get canDeleteRoles(): boolean { return this.allowed('role.delete'); }
 }

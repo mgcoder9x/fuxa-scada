@@ -54,7 +54,12 @@ function createUsersRouter(deps) {
             case 'duplicate':
                 return res.status(400).json({ error: outcome.error, message: 'Username already exists' });
             case 'invalid':
-                return res.status(400).json({ error: outcome.error, message: outcome.detail });
+                // D-051: `message` unchanged (back-compat); `detailCode`/`detailParams` let the client
+                // render a TRANSLATED, specific reason instead of a generic "invalid input" (N-091 L2).
+                return res.status(400).json({
+                    error: outcome.error, message: outcome.detail,
+                    detailCode: outcome.detailCode, detailParams: outcome.detailParams,
+                });
             default:
                 return res.status(400).json({ error: 'unexpected_error', message: 'Unexpected create outcome' });
         }
@@ -75,7 +80,10 @@ function createUsersRouter(deps) {
             case 'unknown_user':
                 return res.status(404).json({ error: outcome.error, username: outcome.username, message: 'User not found' });
             case 'invalid':
-                return res.status(400).json({ error: outcome.error, message: outcome.detail });
+                return res.status(400).json({
+                    error: outcome.error, message: outcome.detail,
+                    detailCode: outcome.detailCode, detailParams: outcome.detailParams,
+                });
             default:
                 return res.status(400).json({ error: 'unexpected_error', message: 'Unexpected update outcome' });
         }

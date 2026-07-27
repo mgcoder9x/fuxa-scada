@@ -28,6 +28,13 @@ export type AccessState = 'checking' | 'granted' | 'denied';
 export interface UserManagementSeams {
     /** UX gate: does the current identity hold `user.read`? (ModulePermissionService.canReadUsers) */
     canReadUsers: () => boolean;
+    /**
+     * Optional (D-051, fixes N-091 L5): does the identity hold an arbitrary permission?
+     * (`ModulePermissionService.hasPermission`). Used to render only the actions the identity can
+     * actually perform. When omitted, every action is offered — i.e. the previous behavior, with the
+     * server as the enforcing boundary. Never a security control: the server authorizes every write.
+     */
+    can?: (permission: string) => boolean;
     /** GET /api/users → hash-free UserView[] (UserAdminClient.list). */
     listUsers: () => Observable<UserView[]>;
     /** GET /api/roles → RoleOption[] (RoleAdminClient.list). */
@@ -55,6 +62,37 @@ export const USER_MGMT_ERROR_KEYS = {
     lastAdmin: 'msg.user-last-admin',
     failed: 'msg.users-error',
 } as const;
+
+/**
+ * D-051: SPECIFIC i18n keys for the server's machine-readable password-rejection codes.
+ *
+ * Fixes N-091 L2: the server knew exactly why a password was refused ("shorter than the 12-character
+ * minimum" / "on the common-password blocklist") but the UI could only say "Invalid input", because
+ * §9 forbids rendering server text. Mapping the CODE (not the text) to a translation key keeps that
+ * rule intact while telling the operator the actual rule — and `password_too_short` interpolates the
+ * runtime-configured minimum (D-049 makes it changeable, so it must not be hard-coded in the string).
+ * An unknown/absent code falls back to the generic key, so a future server code can never break the UI.
+ */
+export const DETAIL_CODE_KEYS: Readonly<Record<string, string>> = Object.freeze({
+    password_required: 'msg.user-password-required',
+    password_too_short: 'msg.password-too-short',
+    password_too_long: 'msg.password-too-long',
+    password_blocklisted: 'msg.password-blocklisted',
+    password_malformed: 'msg.password-malformed',
+    password_reused: 'msg.rotate-weak-or-reused',
+});
+
+/**
+ * Resolve the i18n key for an admin error, preferring the SPECIFIC key implied by the server's
+ * `detailCode` (D-051) and falling back to the generic `errorId` mapping.
+ */
+export function mapAdminErrorDetailKey(err: AdminError | null | undefined): string {
+    const code = err && err.detailCode;
+    if (typeof code === 'string' && DETAIL_CODE_KEYS[code]) {
+        return DETAIL_CODE_KEYS[code];
+    }
+    return mapAdminErrorKey(err ? err.errorId : undefined);
+}
 
 /** Map a stable AdminError.errorId (the §04/§05 contract) to a GENERIC i18n key. */
 export function mapAdminErrorKey(errorId: AdminErrorId | string | null | undefined): string {
@@ -224,5 +262,33 @@ export class UserManagementPresenter {
     /** Convenience for the template: comma-joined role names for a row. */
     roleLabel(user: UserView): string {
         return this.roleNames(user).join(', ');
+    }
+
+    // --- Action capabilities (D-051, fixes N-091 L5) -------------------------
+    //
+    // WHY. Before this, a `user.read`-only identity saw Add/Edit/Remove buttons and got a 403 it could
+    // not anticipate: the UI advertised authority the identity did not have. Now that the server tells
+    // the client its effective permissions (D-050), the honest UI is to offer only the possible actions.
+    // These are UX affordances ONLY — the server still authorizes every mutation, so hiding a button
+    // removes confusion, not protection. When the `can` seam is absent the actions are all offered and
+    // the server decides (the pre-D-051 behavior), so no caller is forced to supply it.
+
+    private allowed(permission: string): boolean {
+        return this.seams.can ? this.seams.can(permission) === true : true;
+    }
+
+    /** May the identity create users (`user.create`)? Drives the "Add User" control. */
+    get canCreateUsers(): boolean {
+        return this.allowed('user.create');
+    }
+
+    /** May the identity edit users (`user.update`)? Drives the row "Edit" control. */
+    get canUpdateUsers(): boolean {
+        return this.allowed('user.update');
+    }
+
+    /** May the identity delete users (`user.delete`)? Drives the row "Remove" control. */
+    get canDeleteUsers(): boolean {
+        return this.allowed('user.delete');
     }
 }

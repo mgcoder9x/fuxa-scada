@@ -50,33 +50,85 @@ function resolvePasswordPolicy(settings) {
 }
 
 /**
- * Validate a plaintext password against the resolved policy. Returns an error detail string, or null
- * when acceptable. Never hashes; never mutates.
+ * Stable, MACHINE-READABLE rejection codes (D-051, fixes the N-091 L2 defect).
+ *
+ * WHY. The API used to report only an English sentence (`message`). The client's §9 rule forbids
+ * rendering server text, so the UI could only show a generic "Invalid input" and the operator never
+ * learned WHICH rule failed or what the threshold is (observed live, N-091 L2). A human sentence is
+ * also un-localizable and un-testable. These codes + `params` let the client pick a translated message
+ * with the real numbers interpolated, WITHOUT ever displaying server-authored text.
+ *
+ * The codes are part of the API contract: never rename one (add a new code instead).
+ */
+const PASSWORD_REJECTION_CODES = Object.freeze({
+    required: 'password_required',
+    malformed: 'password_malformed',
+    tooLong: 'password_too_long',
+    tooShort: 'password_too_short',
+    blocklisted: 'password_blocklisted',
+});
+
+/**
+ * Validate a plaintext password against the resolved policy, returning a STRUCTURED rejection
+ * (`{ code, message, params }`) or `null` when acceptable. Never hashes; never mutates.
+ *
+ * `message` keeps the exact wording the API already returned (so the HTTP contract and existing tests
+ * are unchanged); `code` + `params` are the additive machine-readable half (D-051).
+ * @param {any} plaintext
+ * @param {{ minLength: number, blocklist: Set<string> }} policy
+ * @returns {{ code: string, message: string, params: Record<string, any> }|null}
+ */
+function validatePasswordPolicyDetailed(plaintext, policy) {
+    if (typeof plaintext !== 'string' || plaintext === '') {
+        return { code: PASSWORD_REJECTION_CODES.required, message: 'password is required', params: {} };
+    }
+    if (hasLoneSurrogate(plaintext)) {
+        return {
+            code: PASSWORD_REJECTION_CODES.malformed,
+            message: 'password contains malformed UTF-16 (lone surrogate)',
+            params: {},
+        };
+    }
+    if (Buffer.byteLength(plaintext, 'utf8') > BCRYPT_MAX_UTF8_BYTES) {
+        return {
+            code: PASSWORD_REJECTION_CODES.tooLong,
+            message: 'password exceeds the ' + BCRYPT_MAX_UTF8_BYTES + '-byte limit',
+            params: { max: BCRYPT_MAX_UTF8_BYTES },
+        };
+    }
+    if ([...plaintext].length < policy.minLength) {
+        return {
+            code: PASSWORD_REJECTION_CODES.tooShort,
+            message: 'password shorter than the ' + policy.minLength + '-character minimum',
+            params: { min: policy.minLength },
+        };
+    }
+    if (policy.blocklist.has(plaintext.toLowerCase())) {
+        return {
+            code: PASSWORD_REJECTION_CODES.blocklisted,
+            message: 'password is on the common-password blocklist',
+            params: {},
+        };
+    }
+    return null;
+}
+
+/**
+ * Back-compatible wrapper: the original string-or-null contract, expressed in terms of the structured
+ * validator so the two can never drift (D-034 single-source discipline).
  * @param {any} plaintext
  * @param {{ minLength: number, blocklist: Set<string> }} policy
  * @returns {string|null}
  */
 function validatePasswordPolicy(plaintext, policy) {
-    if (typeof plaintext !== 'string' || plaintext === '') {
-        return 'password is required';
-    }
-    if (hasLoneSurrogate(plaintext)) {
-        return 'password contains malformed UTF-16 (lone surrogate)';
-    }
-    if (Buffer.byteLength(plaintext, 'utf8') > BCRYPT_MAX_UTF8_BYTES) {
-        return 'password exceeds the ' + BCRYPT_MAX_UTF8_BYTES + '-byte limit';
-    }
-    if ([...plaintext].length < policy.minLength) {
-        return 'password shorter than the ' + policy.minLength + '-character minimum';
-    }
-    if (policy.blocklist.has(plaintext.toLowerCase())) {
-        return 'password is on the common-password blocklist';
-    }
-    return null;
+    const rejection = validatePasswordPolicyDetailed(plaintext, policy);
+    return rejection ? rejection.message : null;
 }
 
 module.exports = {
     validatePasswordPolicy,
+    validatePasswordPolicyDetailed,
+    PASSWORD_REJECTION_CODES,
     resolvePasswordPolicy,
     DEFAULT_PASSWORD_MIN_LENGTH,
     DEFAULT_PASSWORD_BLOCKLIST,

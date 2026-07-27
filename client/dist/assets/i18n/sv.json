@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "Lösenordet måste vara minst {{min}} tecken",
+    "msg.password-too-long": "Lösenordet får inte överstiga {{max}} byte",
+    "msg.password-blocklisted": "Det här lösenordet är för vanligt. Välj ett annat.",
+    "msg.password-malformed": "Lösenordet innehåller ogiltiga tecken",
     "signin.username": "Användarnamn",
     "signin.password": "Lösenord",
     "signin.submit": "Logga in",

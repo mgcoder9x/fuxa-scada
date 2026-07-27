@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "비밀번호는 최소 {{min}}자 이상이어야 합니다",
+    "msg.password-too-long": "비밀번호는 {{max}}바이트를 초과할 수 없습니다",
+    "msg.password-blocklisted": "이 비밀번호는 너무 일반적입니다. 다른 것을 선택하세요.",
+    "msg.password-malformed": "비밀번호에 잘못된 문자가 포함되어 있습니다",
     "msg.signin-unauthorized": "권한이 없습니다!",
     "signin.username": "사용자 이름",
     "signin.password": "비밀번호",

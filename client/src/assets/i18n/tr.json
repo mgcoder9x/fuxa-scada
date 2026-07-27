@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "Parola en az {{min}} karakter olmalıdır",
+    "msg.password-too-long": "Parola {{max}} baytı aşmamalıdır",
+    "msg.password-blocklisted": "Bu parola çok yaygın. Farklı bir parola seçin.",
+    "msg.password-malformed": "Parola geçersiz karakterler içeriyor",
     "msg.signin-unauthorized": "Yetkisiz!",
     "signin.username": "Kullanıcı adı",
     "signin.password": "Parola",

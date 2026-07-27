@@ -72,9 +72,10 @@
         </label>
     </fieldset>
 
-    <!-- Server/submit error (AC-12.4) — generic translated key, never server text -->
+    <!-- Server/submit error (AC-12.4) — translated key + D-051 params (e.g. the real minimum length);
+         still NEVER server text: only the machine-readable code selects the key. -->
     <div class="auth-user-form__error" role="alert" aria-live="assertive" *ngIf="presenter.errorKey">
-        {{ presenter.errorKey | translate }}
+        {{ presenter.errorKey | translate: presenter.errorParams }}
     </div>
 
     <div class="auth-user-form__actions">

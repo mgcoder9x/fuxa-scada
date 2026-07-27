@@ -33,6 +33,7 @@
 
 const {
     validatePasswordPolicy,
+    validatePasswordPolicyDetailed,
     resolvePasswordPolicy,
     DEFAULT_PASSWORD_MIN_LENGTH,
     DEFAULT_PASSWORD_BLOCKLIST,
@@ -123,6 +124,19 @@ class UserService {
     }
 
     /**
+     * Structured variant of {@link _validatePassword} (D-051): returns `{ code, message, params }` or
+     * null. The `code`/`params` are surfaced by the API so the UI can render a TRANSLATED, specific
+     * message (e.g. the actual minimum length) instead of a generic "invalid input" — the root fix for
+     * N-091 L2. `message` is identical to the string variant, so the HTTP `message` field is unchanged.
+     * @param {any} plaintext
+     * @returns {{ code: string, message: string, params: Record<string, any> }|null}
+     * @private
+     */
+    _validatePasswordDetailed(plaintext) {
+        return validatePasswordPolicyDetailed(plaintext, this.passwordPolicy); // single-source (D-034)
+    }
+
+    /**
      * Validate submitted `roles`/`metadata` shape (used by create + update). Returns an error detail
      * or null. `roles` must be an array of strings; `metadata` an object without a top-level `roles`
      * key (the reserved-key invariant INV-1, kept first-class by D-007).
@@ -175,9 +189,14 @@ class UserService {
         if (!username) {
             return { kind: 'missing_field', error: 'missing_field', field: 'username' };
         }
-        const pwDetail = this._validatePassword(r.password); // AC-4.6/4.7 + omitted password (§8.1)
-        if (pwDetail) {
-            return { kind: 'invalid', error: 'validation_error', detail: pwDetail };
+        const pwRejection = this._validatePasswordDetailed(r.password); // AC-4.6/4.7 + omitted password (§8.1)
+        if (pwRejection) {
+            // D-051: `detail` (message) unchanged for API/back-compat; `detailCode`/`detailParams`
+            // are the additive machine-readable half the UI translates.
+            return {
+                kind: 'invalid', error: 'validation_error', detail: pwRejection.message,
+                detailCode: pwRejection.code, detailParams: pwRejection.params,
+            };
         }
         const fieldDetail = this._validateFields(r);
         if (fieldDetail) {
@@ -252,9 +271,12 @@ class UserService {
         }
         const hasPassword = r.password !== undefined;
         if (hasPassword) {
-            const pwDetail = this._validatePassword(r.password); // AC-4.6/4.7 + D-025
-            if (pwDetail) {
-                return { kind: 'invalid', error: 'validation_error', detail: pwDetail };
+            const pwRejection = this._validatePasswordDetailed(r.password); // AC-4.6/4.7 + D-025
+            if (pwRejection) {
+                return {
+                    kind: 'invalid', error: 'validation_error', detail: pwRejection.message,
+                    detailCode: pwRejection.code, detailParams: pwRejection.params,
+                };
             }
         }
 

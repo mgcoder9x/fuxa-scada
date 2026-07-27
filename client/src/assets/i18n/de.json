@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "Das Passwort muss mindestens {{min}} Zeichen lang sein",
+    "msg.password-too-long": "Das Passwort darf {{max}} Bytes nicht überschreiten",
+    "msg.password-blocklisted": "Dieses Passwort ist zu verbreitet. Wählen Sie ein anderes.",
+    "msg.password-malformed": "Das Passwort enthält ungültige Zeichen",
     "signin.username": "Benutzername",
     "signin.password": "Passwort",
     "signin.submit": "Anmelden",

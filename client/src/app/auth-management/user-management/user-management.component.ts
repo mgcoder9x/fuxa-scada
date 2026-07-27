@@ -55,6 +55,8 @@ export class UserManagementComponent implements OnInit {
         // role defs into the RBAC permission resolver so role-based checks are consistent (Task 15).
         this.presenter = new UserManagementPresenter({
             canReadUsers: () => permissions.canReadUsers(),
+            // D-051: render only the actions this identity can actually perform (server still enforces).
+            can: (permission) => permissions.hasPermission(permission),
             listUsers: () => users.list(),
             // D-050: skip a request we KNOW the server will refuse. A user holding `user.read` but not
             // `role.read` legitimately reaches this page; calling `/api/roles` there produced a
@@ -84,6 +86,11 @@ export class UserManagementComponent implements OnInit {
     get deletePending(): boolean {
         return this.presenter.deletePending;
     }
+
+    /** D-051: action affordances gated on the identity's effective permissions (server still enforces). */
+    get canCreateUsers(): boolean { return this.presenter.canCreateUsers; }
+    get canUpdateUsers(): boolean { return this.presenter.canUpdateUsers; }
+    get canDeleteUsers(): boolean { return this.presenter.canDeleteUsers; }
 
     /** Existing usernames for the create-form client uniqueness check. */
     existingUsernames(): string[] {

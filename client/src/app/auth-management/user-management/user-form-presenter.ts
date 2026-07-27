@@ -17,7 +17,7 @@
 import type { Observable } from 'rxjs';
 import type { UserView, AdminError } from '../clients/auth-protocol';
 import type { CreateUserInput, UpdateUserInput } from '../clients/user-admin.client';
-import { mapAdminErrorKey, USER_MGMT_ERROR_KEYS } from './user-management-presenter';
+import { mapAdminErrorKey, mapAdminErrorDetailKey, USER_MGMT_ERROR_KEYS } from './user-management-presenter';
 
 export type UserFormMode = 'create' | 'edit';
 
@@ -60,6 +60,11 @@ export class UserFormPresenter {
     pending = false;
     /** Generic i18n key for a server/submit error, or null (AC-12.4 field errors are separate). */
     errorKey: string | null = null;
+    /**
+     * D-051: interpolation values for `errorKey` (e.g. `{ min: 12 }` for `msg.password-too-short`), or
+     * undefined. The template passes them to `translate`, so the message states the ACTUAL rule.
+     */
+    errorParams?: Record<string, unknown>;
 
     private readonly metadata: Record<string, unknown>;
 
@@ -144,7 +149,10 @@ export class UserFormPresenter {
             },
             error: (err: AdminError) => {
                 this.pending = false;
-                this.errorKey = mapAdminErrorKey(err ? err.errorId : undefined);
+                // D-051: prefer the SPECIFIC key the server's detailCode implies (e.g. "password must
+                // be at least {{min}} characters") over the generic "invalid input" (N-091 L2).
+                this.errorKey = mapAdminErrorDetailKey(err);
+                this.errorParams = (err && err.detailParams) || undefined;
             },
         };
 

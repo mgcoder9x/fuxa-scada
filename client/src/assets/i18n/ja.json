@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "パスワードは{{min}}文字以上である必要があります",
+    "msg.password-too-long": "パスワードは{{max}}バイトを超えないようにしてください",
+    "msg.password-blocklisted": "このパスワードは一般的すぎます。別のものを選んでください。",
+    "msg.password-malformed": "パスワードに無効な文字が含まれています",
     "signin.username": "ユーザー名",
     "signin.password": "パスワード",
     "signin.submit": "サインイン",

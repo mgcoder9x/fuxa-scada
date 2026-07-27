@@ -1,4 +1,8 @@
 {
+    "msg.password-too-short": "Пароль должен содержать не менее {{min}} символов",
+    "msg.password-too-long": "Пароль не должен превышать {{max}} байт",
+    "msg.password-blocklisted": "Этот пароль слишком распространён. Выберите другой.",
+    "msg.password-malformed": "Пароль содержит недопустимые символы",
     "msg.signin-unauthorized": "Не авторизовано!",
     "signin.username": "Имя пользователя",
     "signin.password": "Пароль",

@@ -78,6 +78,14 @@ export interface AdminError {
     errorId: AdminErrorId;
     status: number;
     field?: string;
+    /**
+     * D-051: the server's STABLE machine-readable reason code (e.g. `password_too_short`), when the
+     * endpoint provides one. Carried so the UI can render a SPECIFIC translated message; the server's
+     * English `message` is still never displayed (§9).
+     */
+    detailCode?: string;
+    /** D-051: interpolation values for the translated message (e.g. `{ min: 12 }`). */
+    detailParams?: Record<string, unknown>;
 }
 
 const SIGN_IN_ERROR_IDS: ReadonlySet<SignInErrorId> = new Set<SignInErrorId>([
@@ -231,6 +239,15 @@ export function normalizeAdminError(status: number, body: unknown): AdminError {
     const out: AdminError = { errorId, status: typeof status === 'number' ? status : 0 };
     if (typeof b['field'] === 'string') {
         out.field = b['field'] as string;
+    }
+    // D-051: carry the machine-readable reason + its interpolation values when present. Never the
+    // server's `message` — that stays server-side (§9); only the code drives the translated text.
+    if (typeof b['detailCode'] === 'string' && b['detailCode'] !== '') {
+        out.detailCode = b['detailCode'] as string;
+        const params = b['detailParams'];
+        if (params && typeof params === 'object' && !Array.isArray(params)) {
+            out.detailParams = params as Record<string, unknown>;
+        }
     }
     return out;
 }
