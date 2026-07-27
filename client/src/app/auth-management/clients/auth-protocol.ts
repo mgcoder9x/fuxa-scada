@@ -179,6 +179,44 @@ export function mapRolesResponse(body: unknown): RoleOption[] {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Own-authority + permission vocabulary (D-050 · GET /api/auth/permissions)
+// ---------------------------------------------------------------------------
+
+/**
+ * The caller's OWN authority plus the grantable permission vocabulary, as returned by
+ * `GET /api/auth/permissions` (D-050).
+ *
+ * `effective` is server-computed by the SAME `Authorization_Service.effective` that decides
+ * `isAllowed`, so a client gate built on it can never disagree with enforcement. `catalog` is the
+ * vocabulary the role editor offers (server-owned, so a newly added server permission — e.g. D-049's
+ * `settings.*` — appears without a client release; this retires the hand-mirror that caused N-091 L3).
+ * `mustRotate` true ⇒ `effective` is empty by contract (P-009: a gated account may do nothing but
+ * rotate its password).
+ */
+export interface IdentityPermissions {
+    username: string;
+    effective: string[];
+    catalog: string[];
+    mustRotate: boolean;
+}
+
+/**
+ * Map a `GET /api/auth/permissions` body to `IdentityPermissions`. Accepts the full envelope
+ * `{ status, data:{…} }` or the inner `data` object. Defensive: absent/malformed fields degrade to
+ * empty arrays / `false` rather than throwing, so a partial response can never crash the gate.
+ */
+export function mapPermissionsResponse(body: unknown): IdentityPermissions {
+    const b = asObject(body);
+    const data = asObject('data' in b ? b['data'] : b);
+    return {
+        username: asString(data['username']),
+        effective: asStringArray(data['effective']),
+        catalog: asStringArray(data['catalog']),
+        mustRotate: data['mustRotate'] === true,
+    };
+}
+
 /**
  * Normalize a user/role admin error (HTTP status + error body) to a stable `AdminError`. Unknown or
  * absent identifiers fall back to `unexpected_error`. `field` is carried through when present

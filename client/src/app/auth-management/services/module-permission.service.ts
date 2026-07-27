@@ -1,8 +1,12 @@
 import { Injectable } from '@angular/core';
+import { Observable, of } from 'rxjs';
+import { catchError, map, shareReplay, tap } from 'rxjs/operators';
 
 import { AuthService } from '../../_services/auth.service';
 import { ProjectService } from '../../_services/project.service';
 import { SessionStore } from './session.store';
+import { PermissionsClient } from '../clients/permissions.client';
+import { IdentityPermissions } from '../clients/auth-protocol';
 
 /**
  * Permission ids from the RBAC model (design/05-rbac-authorization.md §2/§5).
@@ -42,11 +46,66 @@ export class ModulePermissionService {
     /** role id → permissions[], populated by the page once `GET /api/roles` has loaded (§05). */
     private roleDefs = new Map<string, string[]>();
 
+    /**
+     * The identity's SERVER-COMPUTED effective permissions (`GET /api/auth/permissions`, D-050), or
+     * `null` when not yet loaded / unavailable. This is the authoritative input for a non-admin.
+     */
+    private effective: Set<string> | null = null;
+
+    /** The server-owned grantable permission vocabulary (D-050), or `null` when not loaded. */
+    private catalog: string[] | null = null;
+
+    /** In-flight/completed load, shared so concurrent pages trigger exactly ONE request per session. */
+    private loadOnce: Observable<IdentityPermissions | null> | null = null;
+
     constructor(
         private authService: AuthService,
         private projectService: ProjectService,
-        private session: SessionStore
+        private session: SessionStore,
+        private permissionsClient: PermissionsClient
     ) { }
+
+    /**
+     * Load (once per session) the identity's own authority + the permission vocabulary from the
+     * server, then complete. Pages MUST call this before gating so the decision is made on real data
+     * instead of an empty local cache — the root fix for the N-091 L1 deadlock, where the gate denied
+     * a legitimate `user.read` holder because it could only learn permissions from `GET /api/roles`
+     * (403 for that very user).
+     *
+     * NEVER errors out to the caller: a failed/unavailable load resolves `null` and leaves
+     * `effective` as `null`, which `hasPermission` treats as "defer to the server" (see there).
+     * `shareReplay` makes concurrent callers share one HTTP request and later callers reuse the result.
+     */
+    ensureLoaded(): Observable<IdentityPermissions | null> {
+        if (!this.loadOnce) {
+            this.loadOnce = this.permissionsClient.get().pipe(
+                tap((p) => {
+                    this.effective = new Set<string>(p.effective || []);
+                    this.catalog = Array.isArray(p.catalog) ? p.catalog.slice() : [];
+                }),
+                map((p) => p as IdentityPermissions | null),
+                catchError(() => of(null)),
+                shareReplay({ bufferSize: 1, refCount: false })
+            );
+        }
+        return this.loadOnce;
+    }
+
+    /** Drop the cached authority (call on sign-out / identity change) so the next page reloads it. */
+    reset(): void {
+        this.effective = null;
+        this.catalog = null;
+        this.loadOnce = null;
+    }
+
+    /**
+     * The server-owned grantable permission vocabulary, or `[]` when not loaded. The role editor
+     * unions this with the permissions already present on loaded roles; `[]` makes it fall back to its
+     * local constant, so the editor always renders something.
+     */
+    permissionCatalog(): string[] {
+        return this.catalog ? this.catalog.slice() : [];
+    }
 
     /**
      * Provide the role→permission definitions (from `RoleAdminClient.list()`, §05) so this
@@ -62,10 +121,21 @@ export class ModulePermissionService {
 
     /**
      * Whether the current identity holds `permission`.
-     *  - security disabled  → allow (nothing to gate);
-     *  - administrator      → allow (admins hold `user.*` incl. `user.read`, AC-10.4);
-     *  - otherwise          → resolve from first-class `roles` (D-007) against loaded role defs;
-     *                         if no defs are loaded yet, deny locally and let the server enforce (403).
+     *  - security disabled          → allow (nothing to gate);
+     *  - administrator              → allow (admins hold the whole ADMIN_PERMISSION_SET, AC-10.4);
+     *  - server `effective` loaded  → authoritative set-membership (D-050). This is the SAME set the
+     *                                 server's `isAllowed` consults, so the gate cannot disagree with
+     *                                 enforcement;
+     *  - `effective` NOT loaded     → fall back to locally-known role definitions if any were supplied,
+     *                                 else **defer to the server** (allow the attempt).
+     *
+     * Why deferring (not denying) is correct when nothing is loaded — this is the D-050 root fix.
+     * The previous code denied here, and because a non-admin cannot read `GET /api/roles` the local
+     * cache could never fill, so the deny was PERMANENT: a user holding `user.read` was locked out of a
+     * page the server would happily serve (verified live, N-091 L1). Deferring costs at most one
+     * request that the server answers with 403 — which the page already renders as "Unauthorized!" —
+     * and it CANNOT leak anything, because this gate is UX-only and every data-bearing endpoint is
+     * independently authorized server-side. Fail-open in a UX hint, fail-closed in enforcement.
      */
     hasPermission(permission: string): boolean {
         if (!this.projectService.isSecurityEnabled()) {
@@ -74,11 +144,15 @@ export class ModulePermissionService {
         if (this.authService.isAdmin()) {
             return true;
         }
-        const roleIds = this.session.roles();
-        if (this.roleDefs.size === 0) {
-            return false;
+        if (this.effective) {
+            return this.effective.has(permission);
         }
-        return roleIds.some(id => (this.roleDefs.get(id) || []).includes(permission));
+        const roleIds = this.session.roles();
+        if (this.roleDefs.size > 0) {
+            return roleIds.some(id => (this.roleDefs.get(id) || []).includes(permission));
+        }
+        // Authority unknown (endpoint unavailable/not yet loaded) → let the server decide.
+        return true;
     }
 
     /** Convenience for the management-route gate (AC-12.6). */

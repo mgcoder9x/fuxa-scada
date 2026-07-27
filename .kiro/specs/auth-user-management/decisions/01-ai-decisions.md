@@ -815,7 +815,7 @@
 ### D-050 — Server-authoritative permission resolution for the client (root fix for the N-091 L1 deadlock + L3 catalog drift)
 
 - Date: 2026-07-27
-- Status: **PROPOSED — pending user validation. NOT implemented.** Design-first per the standing process; touches the module client only (plus one additive server endpoint), no FUXA-core hot path.
+- Status: **Active (CONFIRMED) — IMPLEMENTED + verified live 2026-07-27 (N-092).** Design was validated against source before any code (server `effective()` already computes the needed set; `req.authIdentity` already populated; `/api/auth` already in `AUTH_MODULE_PATHS`, so FUXA-core needed ZERO further edits). Server suite 204, client jest 93, prod build exit 0, and the exact live scenario that failed in N-091 now passes.
 - Links: N-091 (L1 deadlock + L3 drift, both observed live), D-046 (chose the hand-mirrored catalog and flagged this exact follow-up), D-007 (roles first-class), D-049 (`settings.*` perms), AC-12.6.
 - Problem (single shared root, two symptoms): the client tries to REPLICATE an authorization decision from data it is **not permitted to read**. `ModulePermissionService.hasPermission()` needs role→permission definitions, which come from `GET /api/roles` (requires `role.read`); and the role dialog needs the permission vocabulary, which is a hand-copied mirror of the server's `ADMIN_PERMISSION_SET`. Consequences observed live: a non-admin with `user.read` is denied locally forever (L1), and `settings.read`/`settings.manage` are ungrantable via UI (L3). Any future server permission will drift again.
 - Decision (proposed): make the SERVER the single source of truth for what the caller may do, and reduce the client to rendering it.

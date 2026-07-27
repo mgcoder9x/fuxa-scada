@@ -28,14 +28,20 @@ export type AccessState = 'checking' | 'granted' | 'denied';
 export type RoleFormMode = 'create' | 'edit';
 
 /**
- * The canonical assignable permission catalog — a CLIENT MIRROR of the server's `ADMIN_PERMISSION_SET`
- * (VERIFIED in `server/auth-management/services/authorization.service.js`). Drift risk is documented
- * in D-046; the root-correct follow-up is a server `GET /api/permissions` endpoint. `account.rotatePassword`
- * is intentionally excluded here (self-service/gate permission, Phase-3 concern).
+ * OFFLINE FALLBACK permission catalog, used only when the server vocabulary is unavailable.
+ *
+ * D-050 retired this list as the primary source: it was a hand-copied mirror of the server's
+ * `ADMIN_PERMISSION_SET`, and when D-049 added `settings.read`/`settings.manage` server-side this copy
+ * was not updated, so those permissions became UNGRANTABLE through the UI (observed live, N-091 L3).
+ * The catalog now comes from `GET /api/auth/permissions` via the `permissionCatalog` seam; this
+ * constant remains purely so the editor still renders something if that call failed — and it is kept
+ * in sync as a last resort. `account.rotatePassword` stays excluded: it is self-authorized by the
+ * bootstrap gate (P-009), not something a role grants.
  */
 export const KNOWN_PERMISSIONS: readonly string[] = Object.freeze([
     'user.create', 'user.read', 'user.update', 'user.delete',
     'role.create', 'role.read', 'role.update', 'role.delete',
+    'settings.read', 'settings.manage',
 ]);
 
 /** Generic i18n KEYS for role admin outcomes (translation keys, never server text). */
@@ -74,6 +80,13 @@ function isAccessError(err: AdminError | undefined): boolean {
 /** Seams the presenter needs, injected as plain functions (DV-010) — never Angular services. */
 export interface RoleManagementSeams {
     canReadRoles: () => boolean;
+    /**
+     * Optional (D-050): the SERVER-owned grantable permission vocabulary
+     * (`ModulePermissionService.permissionCatalog()`). When it returns a non-empty list it REPLACES the
+     * local `KNOWN_PERMISSIONS` fallback, so a permission added server-side (e.g. D-049's `settings.*`)
+     * becomes grantable without a client change — the root fix for the N-091 L3 mirror drift.
+     */
+    permissionCatalog?: () => string[];
     listRoles: () => Observable<RoleOption[]>;
     createRole: (input: { id: string; name: string; permissions: string[] }) => Observable<RoleOption>;
     updateRole: (id: string, permissions: string[]) => Observable<RoleOption>;
@@ -129,12 +142,15 @@ export class RoleManagementPresenter {
     }
 
     /**
-     * Assignable permission catalog: the known set (client mirror of the server ADMIN_PERMISSION_SET,
-     * D-046) UNION any permission already present on a loaded role (so a custom/unknown perm stored on
-     * a role is never hidden). Sorted for a stable display order.
+     * Assignable permission catalog: the SERVER vocabulary when available (D-050 `permissionCatalog`
+     * seam), otherwise the local `KNOWN_PERMISSIONS` fallback — UNION any permission already present on
+     * a loaded role (so a custom/unknown perm stored on a role is never hidden). Sorted for a stable
+     * display order.
      */
     availablePermissions(): string[] {
-        const set = new Set<string>(KNOWN_PERMISSIONS);
+        const fromServer = this.seams.permissionCatalog ? (this.seams.permissionCatalog() || []) : [];
+        const base: readonly string[] = fromServer.length > 0 ? fromServer : KNOWN_PERMISSIONS;
+        const set = new Set<string>(base);
         for (const r of this.roles) {
             for (const p of (r.permissions || [])) {
                 if (typeof p === 'string' && p.length > 0) set.add(p);

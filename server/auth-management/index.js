@@ -47,6 +47,7 @@ const { createUsersRouter } = require('./api/users.router');
 const { createRolesRouter } = require('./api/roles.router');
 const { createAccountRouter } = require('./api/account.router');
 const { createAuthConfigRouter } = require('./api/auth-config.router');
+const { createPermissionsRouter } = require('./api/permissions.router');
 
 const DEFAULT_BCRYPT_COST = 12; // D-008
 
@@ -135,7 +136,7 @@ async function createAuthManagementModule(deps = {}) {
     });
 
     // ---- API layer: middleware + mounted routers ----
-    const { requirePermission } = createAuthorizationMiddleware({ tokenService, userStore, authorizationService: authorization });
+    const { requirePermission, requireAuthenticated } = createAuthorizationMiddleware({ tokenService, userStore, authorizationService: authorization });
     const routerSettings = {
         secureEnabled: settings.secureEnabled,
         enableRefreshCookieAuth: settings.enableRefreshCookieAuth,
@@ -148,6 +149,8 @@ async function createAuthManagementModule(deps = {}) {
     router.use(createRolesRouter({ roleService, requirePermission }));
     router.use(createAccountRouter({ accountService, requirePermission }));
     router.use(createAuthConfigRouter({ authConfigService, requirePermission })); // D-049 runtime config
+    // D-050: own-authority + vocabulary read (authenticated-only, cannot deadlock like role.read).
+    router.use(createPermissionsRouter({ authorizationService: authorization, roleStore, requireAuthenticated }));
 
     return {
         router,

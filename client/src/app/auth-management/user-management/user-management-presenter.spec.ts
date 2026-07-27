@@ -74,13 +74,20 @@ describe('UserManagementPresenter access gate (AC-12.6)', () => {
 });
 
 describe('UserManagementPresenter list + role resolution (AC-12.1)', () => {
-    it('resolves role ids to names, omitting ids with no matching role (§2.3)', () => {
+    /**
+     * D-050 (deliberate behavior change, NOT a weakened assertion): an unresolved role id is now shown
+     * RAW instead of being omitted. Reason — a user holding `user.read` but not `role.read` cannot load
+     * the role catalogue at all, so omission made EVERY row's roles render blank on the live instance,
+     * i.e. the page silently under-reported a user's authority. A raw id is truthful and still resolves
+     * to the friendly name for anyone who can read roles.
+     */
+    it('resolves role ids to names, showing an unresolved id RAW (D-050, was: omitted)', () => {
         const { presenter } = make();
         presenter.init();
         expect(presenter.roleNames(USERS[0])).toEqual(['Administrator']);
-        // joe has r-op (Operator) + r-ghost (deleted → omitted, not shown raw)
-        expect(presenter.roleNames(USERS[1])).toEqual(['Operator']);
-        expect(presenter.roleLabel(USERS[1])).toBe('Operator');
+        // joe has r-op (Operator) + r-ghost (unknown → shown raw so authority is never hidden)
+        expect(presenter.roleNames(USERS[1])).toEqual(['Operator', 'r-ghost']);
+        expect(presenter.roleLabel(USERS[1])).toBe('Operator, r-ghost');
     });
 
     it('roleNames is defensive for a user with no/invalid roles', () => {
@@ -98,13 +105,16 @@ describe('UserManagementPresenter list + role resolution (AC-12.1)', () => {
         expect(onRolesLoaded).toHaveBeenCalledWith(ROLES);
     });
 
-    it('leaves roles empty (names omitted) when the role fetch fails — list still loads', () => {
+    it('still loads the list when the role fetch fails, and shows role IDS raw (D-050)', () => {
         const { presenter } = make({ listRoles: () => throwError(() => ({ errorId: 'unexpected_error', status: 500 })) });
         presenter.init();
         expect(presenter.access).toBe('granted');
         expect(presenter.users).toEqual(USERS);
         expect(presenter.roles).toEqual([]);
-        expect(presenter.roleNames(USERS[0])).toEqual([]);   // no role defs → omit
+        // No role catalogue ⇒ ids cannot be resolved to names, but they MUST still be visible:
+        // this is exactly the live case of a `user.read`-only identity (403 on /api/roles).
+        expect(presenter.roleNames(USERS[0])).toEqual([...USERS[0].roles]);
+        expect(presenter.roleNames(USERS[1])).toEqual([...USERS[1].roles]);
     });
 });
 

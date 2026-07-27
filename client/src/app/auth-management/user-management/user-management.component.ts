@@ -17,6 +17,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslateModule } from '@ngx-translate/core';
+import { of } from 'rxjs';
 
 import { UserAdminClient } from '../clients/user-admin.client';
 import { RoleAdminClient } from '../clients/role-admin.client';
@@ -48,21 +49,30 @@ export class UserManagementComponent implements OnInit {
     constructor(
         users: UserAdminClient,
         roles: RoleAdminClient,
-        permissions: ModulePermissionService,
+        private permissions: ModulePermissionService,
     ) {
         // Wire the REAL seams into the pure presenter (DV-010). `onRolesLoaded` feeds the loaded
         // role defs into the RBAC permission resolver so role-based checks are consistent (Task 15).
         this.presenter = new UserManagementPresenter({
             canReadUsers: () => permissions.canReadUsers(),
             listUsers: () => users.list(),
-            listRoles: () => roles.list(),
+            // D-050: skip a request we KNOW the server will refuse. A user holding `user.read` but not
+            // `role.read` legitimately reaches this page; calling `/api/roles` there produced a
+            // guaranteed 403 (console noise + a pointless round trip). Role IDs are then shown raw by
+            // the presenter's fallback, which is truthful. Enforcement is unchanged — this only avoids
+            // asking a question whose answer is already known.
+            listRoles: () => (permissions.canReadRoles() ? roles.list() : of([])),
             deleteUser: (username) => users.delete(username),
             onRolesLoaded: (loaded) => permissions.setRoleDefinitions(loaded),
         });
     }
 
     ngOnInit(): void {
-        this.presenter.init();
+        // D-050: load the identity's OWN effective permissions from the server BEFORE the access gate
+        // runs. Without this the gate had no data for a non-admin and denied permanently (N-091 L1),
+        // because the only previous source (`GET /api/roles`) is 403 for exactly those users.
+        // `ensureLoaded` never errors — on failure it resolves null and the gate defers to the server.
+        this.permissions.ensureLoaded().subscribe(() => this.presenter.init());
     }
 
     /** Role options for the create/edit form's assignment control. */

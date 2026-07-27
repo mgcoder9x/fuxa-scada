@@ -27,14 +27,15 @@
  * membership and splits FUXA's single 401 into 401 (unauthenticated) vs 403 (unpermitted).
  */
 
-/** The distinguished permission set that defines an administrator (§2.2). */
-const ADMIN_PERMISSION_SET = Object.freeze([
-    'user.create', 'user.read', 'user.update', 'user.delete',
-    'role.create', 'role.read', 'role.update', 'role.delete',
-    // D-049: functional permissions for runtime auth-config (settings are a single global object,
-    // so this is the function axis only — no data-scoped variant). Admins inherit both.
-    'settings.read', 'settings.manage',
-]);
+/**
+ * The distinguished permission set that defines an administrator (§2.2).
+ *
+ * SINGLE SOURCE (D-050): imported from the model layer instead of being re-declared here. A second
+ * independent copy used to live in this file; D-049 added `settings.*` to it and left the model copy
+ * at 8 entries, so the two disagreed — exactly the drift class the anti-drift rules forbid. Services
+ * depend on models (never the reverse), so the model owns the definition.
+ */
+const { ADMIN_PERMISSION_SET } = require('../models/permission');
 
 /** FUXA legacy admin group codes (verified: `jwt-helper.adminGroups = [-1, 255]`). */
 const ADMIN_GROUP_CODES = Object.freeze([-1, 255]);

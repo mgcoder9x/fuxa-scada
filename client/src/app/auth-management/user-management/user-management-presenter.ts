@@ -195,9 +195,15 @@ export class UserManagementPresenter {
     }
 
     /**
-     * Resolve a user's role IDS to display NAMES via the loaded `roles` (design/08 §2.3). An id with
-     * no matching role (e.g. a role deleted after load) is OMITTED rather than shown raw; a refresh
-     * reconciles. Returns names in the user's role order.
+     * Resolve a user's role IDS to display NAMES via the loaded `roles` (design/08 §2.3), falling back
+     * to the raw ID when no name is known.
+     *
+     * D-050 refinement (found by the N-091 follow-up live test): the original code OMITTED an
+     * unresolved id. That was harmless when only admins reached this page, but a user holding
+     * `user.read` WITHOUT `role.read` cannot load the role catalogue at all, so EVERY row's roles
+     * rendered blank — the page silently under-reported authority, which is worse than showing a raw
+     * id. Showing the id is truthful and still reconciles to the friendly name for anyone who can read
+     * roles. An empty/whitespace id contributes nothing.
      */
     roleNames(user: UserView): string[] {
         if (!user || !Array.isArray(user.roles)) {
@@ -205,8 +211,14 @@ export class UserManagementPresenter {
         }
         const byId = new Map(this.roles.map((r) => [r.id, r.name]));
         return user.roles
-            .map((id) => byId.get(id))
-            .filter((name): name is string => typeof name === 'string' && name.length > 0);
+            .map((id) => {
+                const name = byId.get(id);
+                if (typeof name === 'string' && name.length > 0) {
+                    return name;
+                }
+                return typeof id === 'string' ? id.trim() : '';
+            })
+            .filter((label): label is string => label.length > 0);
     }
 
     /** Convenience for the template: comma-joined role names for a row. */

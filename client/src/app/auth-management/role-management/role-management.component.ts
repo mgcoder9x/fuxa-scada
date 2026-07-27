@@ -33,9 +33,10 @@ export class RoleManagementComponent implements OnInit {
     /** Delete-confirm target: null = closed. */
     deleteTarget: string | null = null;
 
-    constructor(roles: RoleAdminClient, permissions: ModulePermissionService) {
+    constructor(roles: RoleAdminClient, private permissions: ModulePermissionService) {
         this.presenter = new RoleManagementPresenter({
             canReadRoles: () => permissions.canReadRoles(),
+            permissionCatalog: () => permissions.permissionCatalog(), // D-050: server-owned vocabulary
             listRoles: () => roles.list(),
             createRole: (input) => roles.create(input),
             updateRole: (id, perms) => roles.update(id, perms),
@@ -44,7 +45,10 @@ export class RoleManagementComponent implements OnInit {
     }
 
     ngOnInit(): void {
-        this.presenter.init();
+        // D-050: resolve the identity's OWN authority + the permission vocabulary from the server
+        // BEFORE gating, so the gate decides on real data. `ensureLoaded` never errors (a failure
+        // resolves null and `hasPermission` then defers to server enforcement), so `init()` always runs.
+        this.permissions.ensureLoaded().subscribe(() => this.presenter.init());
     }
 
     get access(): AccessState { return this.presenter.access; }

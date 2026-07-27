@@ -113,7 +113,38 @@ function createAuthorizationMiddleware(deps) {
         };
     }
 
-    return { requirePermission, buildIdentity };
+    /**
+     * Express middleware factory: guard a route behind AUTHENTICATION ONLY — no permission
+     * membership (D-050). Used by `GET /api/auth/permissions`, which reveals nothing but the
+     * CALLER'S OWN authority plus the permission vocabulary; requiring a permission there would
+     * re-create the N-091 L1 deadlock (a non-admin cannot read `/api/roles`, so it could never learn
+     * what it is allowed to do, so the client denied it forever).
+     *
+     * It reuses the same `buildIdentity` path, therefore it keeps every identity invariant:
+     * signature/expiry verification (§02), the LIVE-record read (D-015), `tokenVersion` active
+     * revocation (D-027), disabled-account denial, and the AC-16.4 fail-fast 503. The bootstrap gate
+     * is NOT bypassed silently: the identity is passed through with `mustRotate` intact and the
+     * handler is responsible for reporting an empty authority for a gated identity (P-009 — a gated
+     * account may do nothing but rotate, so its truthful effective set is empty).
+     * @returns {Function}
+     */
+    function requireAuthenticated() {
+        return async function (req, res, next) {
+            let identity;
+            try {
+                identity = await buildIdentity(req);
+            } catch (_e) {
+                return res.status(503).json({ error: 'service_unavailable', message: 'Authorization service unavailable' });
+            }
+            if (!identity || identity.authenticated !== true) {
+                return res.status(401).json({ error: 'unauthorized_error', message: 'Unauthorized!' });
+            }
+            req.authIdentity = identity;
+            return next();
+        };
+    }
+
+    return { requirePermission, requireAuthenticated, buildIdentity };
 }
 
 module.exports = { createAuthorizationMiddleware, extractToken };
