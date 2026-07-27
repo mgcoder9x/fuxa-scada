@@ -345,6 +345,92 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
   - Ensure all tests pass, ask the user if questions arise.
   - _DONE 2026-07-17 (N-074/N-075): AUTOMATED full-stack GREEN — server mocha **170 passing** (`test/auth-management/**`, incl. property tests ≥100 iters) + client jest **74 passing** (6 suites, `--runInBand`). Module SUPERSEDE is LIVE on the real instance (stage-4 flip, N-074): `POST /api/signin` 200 with the D-044 projection + `mustRotate`, gated token → `/api/users` 403, wrong-pass 401 (server-side verified via curl); the SAME full browser flow (login→forced-rotate→app→user CRUD→non-admin denied, 0 console errors) was browser-verified end-to-end on an isolated temp instance in N-073. **Remaining = human/future, NOT automated-testable here:** (a) the user's live-browser UI acceptance on the real instance; (b) UI restyle per the user's forthcoming mockups; (c) tracked follow-ups (init-perf ~62s, 12-locale i18n translation, TO-014 selective npm-audit re-patch, Node-version pin). Playwright MCP is wedged on this machine so the agent's live-browser check is delegated to the user._
 
+## Phase 2 — post-cutover work (opened 2026-07-27 to close a VERIFIED spec-hygiene gap)
+
+> **Why this section exists.** Task 18 closed the original 17-requirement plan, but real work kept
+> shipping afterwards: D-046…D-051 (Role-Management UI + navigator, the `/api/heartbeat` SUPERSEDE fix,
+> the editor Setup-menu routing, runtime auth-config, the server-authoritative permissions endpoint, and
+> the rejection-code/affordance fixes). None of it existed in `tasks.md` or in `traceability.md` §D, so
+> the spec's own control artifacts had stopped describing reality — the exact condition that makes later
+> verification impossible and that the anti-drift kit exists to prevent (found 2026-07-27; the drift is
+> recorded in the `decisions/` ledger only, which was doing double duty as plan + traceability).
+> Every item below is reconstructed from the ledger + verified against the code that is already merged;
+> nothing here is a new promise, and no status is claimed that the ledger does not evidence.
+
+- [x] 19. Role-Management page + in-area navigator (D-046, REQ-9 client half)
+  - [x] 19.1 Implement the Role-Management page (list / create / edit-permissions / delete)
+    - `auth-management/role-management/`: pure `RoleManagementPresenter` (DV-010) + `standalone` component (D-039) over the existing `RoleAdminClient`; edit replaces PERMISSIONS wholesale (id/name immutable, matching the server PUT contract); shared `AuthNavComponent` (Users | Roles)
+    - _Requirements: 9.1, 9.2, 9.3, 9.4_
+    - _DONE 2026-07-17 (D-046, N-083/N-085): jest 7 suites/85, prod build 0; browser-verified create+edit+delete+navigator with 0 console errors. Module-only; no server/FUXA-core edit. The permission catalog was a hand-mirror of the server set — a drift risk flagged at the time and later CONFIRMED as a real defect (N-091 L3), fixed by task 23._
+  - [x] 19.2 Fix the heartbeat token under SUPERSEDE (D-047, fixes N-082)
+    - Under `authModuleEnabled`, `/api/heartbeat` must re-issue a MODULE access token (tokenVersion-stamped, `type:'access'`, roles) via `AuthenticationService.issueSessionFor(username)` reusing the shared `_buildSession` projection — NOT FUXA's tokenVersion-less token, which the module then revoked
+    - _Requirements: 2.4, 10.1_
+    - _DONE 2026-07-17 (D-047, N-082): server-only; exact repro verified (heartbeat → module token → `GET /api/roles` 200, previously 401); suite 172 at the time. Flag OFF leaves the legacy path unchanged._
+  - [x] 19.3 Route the editor Setup menu to the module pages (D-048, Phase 2)
+    - Flag-gated CLIENT-ONLY change: `AppSettings.authModuleEnabled` mirrored from the already-exposed `/api/settings` flag; `setup.component` sends Users/Roles to `/auth/users` / `/auth/roles` under SUPERSEDE and to the legacy pages otherwise (shared-bundle safety)
+    - _Requirements: 12.1, 9.2_
+    - _DONE 2026-07-17 (D-048, N-086): browser-verified on a flipped instance (Setup→Users→`/auth/users`, Setup→Roles→`/auth/roles`, `/api/roles` 200, 0 console errors); non-flipped path verified by code (flag defaults false, boolean-coerced). RESIDUAL (open, task 24.2): a direct URL to `/users` / `/userRoles` under SUPERSEDE still renders FUXA's built-in page._
+
+- [ ] 20. Runtime auth-configuration (D-049, design/13-runtime-config.md)
+  - [x] 20.1 Server: module-owned config store + live-apply service + gated endpoint
+    - `auth_config` single-row table (defaults ◁ settings.js baseline ◁ DB override, fail-safe load), `AuthConfigService` (bounded validation → persist → live-apply → audit), `GET/PUT/DELETE /api/auth/config` behind new `settings.read`/`settings.manage`; hot-swap seams on token service / brute-force guard / hasher cost / password policy; `init()` runs BEFORE bootstrap so an overridden `bcryptCost` also covers the seeded admin
+    - _Requirements: 16.1, 16.3, 4.6, 4.7_
+    - _DONE 2026-07-17 (D-049 Phase 1, N-088): suite 195 (+23 incl. **P-017** hot-swap [bcryptCost non-retroactive], **P-018** atomic validation, **P-019** fail-safe load, **P-020** HTTP gate). FUXA-core footprint = ONE line (`'/api/auth'` in `AUTH_MODULE_PATHS`); OFF path byte-for-byte unchanged. Live-verified on the real instance 2026-07-27 (N-090/N-091): minLength 12→20 enforced on the NEXT request with no restart, then reset._
+  - [ ] 20.2 Client: `/auth/settings` runtime-configuration page
+    - Standalone page (DV-010 presenter + jest) over a thin `AuthConfigClient`; renders the effective config, submits a bounded patch, surfaces `validation_error` per field; gated by `settings.read` / `settings.manage` (now grantable via the server catalog, task 23)
+    - _Requirements: 16.1, 16.3_
+    - _NOT STARTED — the backend is LIVE but unreachable from the UI, so the "configure at runtime" capability the user asked for is not yet usable by an operator._
+  - [ ] 20.3 Advanced token-signing configuration (iss / aud / alg)
+    - Zero-logout overlap window for `jwtIssuer`/`jwtAudience` changes; `jwtAlgorithm` stays a confirmed re-login (design refinement `de419ce`)
+    - _Requirements: 2.2, 16.1_
+    - _NOT STARTED (D-049 Phase 3)._
+
+- [x] 21. Deep live acceptance test of the flipped instance (N-091)
+  - Exercise the REAL instance end-to-end (UI + API) with a non-admin identity, not just admin: role+user creation, password policy (min-length + case-insensitive blocklist), the full allow/deny matrix, the last-admin guard, brute-force throttling/scoping/expiry, and the D-049 hot-swap
+  - _Requirements: 4.6, 4.7, 8.5, 9.2, 10.1, 10.2, 12.6, 16.1_
+  - _DONE 2026-07-27 (N-091): everything above PROVEN on production data (first time the role-based half of RBAC was exercised there). It also FOUND four defects — L1 non-admin gate deadlock, L2 opaque validation message, L3 role-catalog drift, L5 actions offered without authority — plus a server-side duplicate `ADMIN_PERMISSION_SET` found while designing the fix. Tasks 22/23 close them._
+
+- [x] 22. Server-authoritative permission resolution (D-050, closes N-091 L1 + L3)
+  - [x] 22.1 Add `GET /api/auth/permissions` + an authenticated-only middleware gate
+    - Returns `{ username, effective[], catalog[], mustRotate }`; `effective` comes from the SAME `Authorization_Service.effective` that `isAllowed` consults (so the UI can never disagree with enforcement); `catalog` = `ADMIN_PERMISSION_SET` ∪ permissions on stored roles; a `mustRotate` identity reports `effective: []` per P-009. New `requireAuthenticated()` reuses `buildIdentity`, keeping signature/expiry verification, the live-record read (D-015), tokenVersion revocation (D-027) and the AC-16.4 503 fail-fast. Deliberately NOT permission-gated — requiring one would recreate the deadlock
+    - _Requirements: 10.1, 10.2, 12.6, 16.3_
+    - _DONE 2026-07-27 (D-050, N-092): 9 HTTP tests incl. explicit L1/L3 regressions + "effective AGREES with enforcement"; suite 204. ZERO further FUXA-core edits (`/api/auth` was already in `AUTH_MODULE_PATHS`)._
+  - [x] 22.2 Single-source `ADMIN_PERMISSION_SET`
+    - The model layer owns the definition (incl. D-049's `settings.*`); `authorization.service.js` imports it instead of re-declaring a second copy that D-049 had updated only on one side
+    - _Requirements: 10.4_
+    - _DONE 2026-07-27 (N-092): found during D-050's design validation. No live impact today (no production importer of the stale copy) but `isAdministrator()` would have rejected a genuine admin for any future importer._
+  - [x] 22.3 Client: resolve from the server, delete the deadlock branch
+    - `ensureLoaded()` (one shared request per session), `permissionCatalog()`, `reset()`; `hasPermission()` resolves from server `effective` and the `roleDefs.size === 0 → false` branch is REMOVED — unknown authority now DEFERS to the server instead of denying forever; both pages pre-load before gating; the role editor renders the server catalog
+    - _Requirements: 12.6, 9.2_
+    - _DONE 2026-07-27 (N-092): client jest 93/8 suites; BROWSER — a `user.read`-only identity now LISTS users (was "Unauthorized!") with 0 console errors; admin regression clean; the Add-Role dialog now offers `settings.read`/`settings.manage`. Also: unresolved role IDs are shown RAW (omission blanked every row for such an identity — 2 specs updated deliberately with the reason recorded) and the guaranteed-403 `/api/roles` call is skipped._
+
+- [x] 23. Actionable rejection reasons + honest action affordances (D-051, closes N-091 L2 + L5)
+  - [x] 23.1 Machine-readable password-rejection codes end-to-end
+    - `validatePasswordPolicyDetailed()` + `PASSWORD_REJECTION_CODES` with interpolation `params`; the legacy string validator becomes a WRAPPER over it (single-source, D-034); services + users/account routers emit ADDITIVE `detailCode`/`detailParams` with `message` byte-unchanged; client carries them, maps CODE→specific i18n key (unknown code → generic fallback) and renders `translate: errorParams`; 4 new keys in all 13 locales
+    - _Requirements: 4.6, 4.7, 12.4, 17.3_
+    - _DONE 2026-07-27 (D-051, N-093): 6 server tests (incl. "the minimum tracks a RUNTIME-CHANGED policy" — mandatory because D-049 makes it configurable, so a literal "12" in a translation would become a lie) + 9 client specs; suite 210, jest 102/9. BROWSER: "Password must be at least 12 characters" / "This password is too common. Choose a different one." — §9 preserved (the CODE selects the message; server text is never rendered)._
+  - [x] 23.2 Permission-gated action controls
+    - Optional `can(permission)` seam on both page presenters (wired to the now server-authoritative `hasPermission`) + `canCreate*/canUpdate*/canDelete*` driving `*ngIf` on every action control
+    - _Requirements: 12.6, 9.2, 10.2_
+    - _DONE 2026-07-27 (D-051, N-093): BROWSER — `operator1` (`user.read` only) sees the list with "Add User" hidden and 0 Edit / 0 Remove, while admin sees all. UX honesty ONLY: enforcement stays server-side; an absent seam offers everything and a non-boolean seam result fails SAFE (tested)._
+
+- [ ] 24. Open hardening / hygiene items (each tracked, none silently dropped)
+  - [ ] 24.1 Repository line-ending normalization (N-089)
+    - `.gitattributes` with `* text=auto eol=lf` (+ explicit `binary` for images/fonts) as an ISOLATED renormalization commit, so `client/dist` content hashes stop depending on the contributor's machine
+    - _AWAITING USER APPROVAL — repo-wide, one-time large diff. Measured evidence: the same font asset is 678,869 B (LF, repo) vs 688,873 B (CRLF, this worktree), so every dist hash shifts per machine and D-038's byte-identity verification is unusable here._
+  - [ ] 24.2 Flag-gated redirect for the legacy `/users` / `/userRoles` routes (D-048 residual)
+    - Under SUPERSEDE, a direct URL to the built-in pages should redirect to the module pages instead of rendering the superseded UI
+    - _Requirements: 12.1_
+  - [ ] 24.3 Authorization message instead of the legacy sign-in dialog for a non-admin (D-042 §3.2 residual)
+    - A non-admin hitting an admin route gets FUXA's "Sign in..." dialog, which asks for credentials the user already has; the truthful response is "not authorized"
+    - _Requirements: 10.2, 11.3_
+  - [ ] 24.4 Native review of the machine-assisted translations
+    - The ~44 keys from N-079 and the 4 keys from D-051 were machine-translated across 12 locales; SCADA terminology needs a native pass
+  - [ ] 24.5 Angular major upgrade (framework XSS advisories) + a real CSP
+    - Deferred with evidence: FUXA has no SSR/hydration so ~3 advisories are N/A (N-079); a genuine CSP first requires removing the inline bootstrap script/handlers and the `eval`-based scripting feature (N-080), so a `'unsafe-inline' 'unsafe-eval'` CSP would be security theater
+  - [ ] 24.6 Boot-time investigation (init latency)
+    - Flip-boot init has been observed between ~12 s and ~62 s on the same instance (N-074/N-090/N-093 runs); intermittent, not root-caused, non-blocking
+
 ## Notes
 
 - Tasks marked with `*` are optional test sub-tasks and can be skipped for a faster MVP; core implementation sub-tasks are never optional.
@@ -369,7 +455,19 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     { "id": 7, "tasks": ["11.3", "11.4", "12.6", "13.5", "16.1", "17.1"] },
     { "id": 8, "tasks": ["13.6", "13.8", "16.2", "17.2", "17.3"] },
     { "id": 9, "tasks": ["17.4"] },
-    { "id": 10, "tasks": ["17.5"] }
+    { "id": 10, "tasks": ["17.5"] },
+    { "id": 11, "tasks": ["19.1", "19.2", "20.1"] },
+    { "id": 12, "tasks": ["19.3", "21"] },
+    { "id": 13, "tasks": ["22.1", "22.2"] },
+    { "id": 14, "tasks": ["22.3", "23.1"] },
+    { "id": 15, "tasks": ["23.2", "20.2"] },
+    { "id": 16, "tasks": ["20.3", "24.1", "24.2", "24.3", "24.4", "24.5", "24.6"] }
   ]
 }
 ```
+
+> Phase-2 wave ordering rationale (not arbitrary): 21 (the deep live test) had to follow 19/20.1
+> because it exercises them; 22 had to follow 21 because 21 is what exposed the deadlock it fixes;
+> 23.2 depends on 22.3 (affordance gating is only meaningful once the client knows its real authority);
+> 20.2 depends on 22.1 because `settings.read`/`settings.manage` only became grantable through the UI
+> once the catalog came from the server.

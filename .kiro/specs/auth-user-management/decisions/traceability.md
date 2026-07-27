@@ -97,6 +97,29 @@ P-006→8.3, P-007→5.3, P-008→5.4, P-009→12.4, P-010→12.5, P-011→8.4, 
 P-014→13.8, P-015→5.8, P-016→2.10. No property is orphaned (closes the P-013…P-016 gap the
 deep review opened).
 
+### D.2 Phase-2 addendum — post-cutover work (added 2026-07-27)
+
+> **Why this addendum exists.** §D above was populated at gate G3 for the original 17-requirement plan
+> and stopped there. Between 2026-07-17 and 2026-07-27 six decisions shipped (D-046…D-051) with tests,
+> new endpoints, new pages and new properties, and NONE of them appeared here or in `tasks.md` — a
+> grep for `D-046`…`D-049` in this file returned **0 hits** (verified 2026-07-27). The ledger was
+> carrying the whole burden of plan + traceability, which is precisely how later verification becomes
+> impossible. The rows below restore the forward map; `tasks.md` §"Phase 2" is the matching plan.
+> Statuses are taken from the ledger evidence, not re-asserted.
+
+| Decision / area | Implementation task(s) | Test(s) / Property(ies) | Status |
+|-----------------|------------------------|-------------------------|--------|
+| **D-046** Role-Management page + `AuthNavComponent` (REQ-9 client half) | 19.1 | `role-management-presenter.spec.ts` (jest, DV-010) + browser create/edit/delete | **IMPLEMENTED + browser-verified** (N-083/N-085). Its hand-mirrored permission catalog was flagged as a drift risk here and later CONFIRMED as defect L3 (N-091) → superseded by D-050/task 22.3 |
+| **D-047** `/api/heartbeat` joins the SUPERSEDE (`issueSessionFor`) | 19.2 | `api.*` heartbeat repro (server suite, 172 at the time) | **IMPLEMENTED + repro-verified** (fixes N-082: FUXA's tokenVersion-less heartbeat token was revoked by the module → 401 on every following request) |
+| **D-048** editor Setup menu → module pages (flag-gated, client-only) | 19.3 | browser flow on a flipped instance + code-verified OFF path (N-086) | **IMPLEMENTED**; residual open → task 24.2 (direct `/users` URL still renders the superseded page) |
+| **D-049** runtime auth-config (`/api/auth/config`) | 20.1 (server) · 20.2 (client page) · 20.3 (iss/aud/alg) | **P-017** hot-swap · **P-018** atomic validation · **P-019** fail-safe load · **P-020** HTTP gate (`auth-config.service.test.js`, `api.auth-config.test.js`) | **20.1 IMPLEMENTED + live-verified** (N-088; hot-swap proven on the real instance 2026-07-27 without restart, N-091). **20.2 / 20.3 NOT STARTED** ⇒ the capability exists but no operator UI reaches it |
+| **N-091** deep live acceptance test (non-admin RBAC, policy, brute-force, hot-swap) | 21 | live UI + API matrix on the real instance | **DONE**; produced defects L1/L2/L3/L5 + the duplicate `ADMIN_PERMISSION_SET` finding |
+| **D-050** server-authoritative permissions (`GET /api/auth/permissions`, `requireAuthenticated`) | 22.1 · 22.2 (single-source admin set) · 22.3 (client resolver) | `api.permissions.test.js` 9 tests — incl. **explicit L1 regression** (a `user.read`-only identity gets 200 + its own set), **L3 regression** (catalog exposes `settings.*`), gated-identity ⇒ `effective: []` (**P-009** consistency), and **"effective AGREES with enforcement"** (every reported permission is `isAllowed`, every withheld one denied); `permissions-protocol.spec.ts` (client) | **IMPLEMENTED + live/browser-verified** (N-092). Server 204 → client jest 93. Closes N-091 L1 + L3 |
+| **D-051** rejection codes + action affordances | 23.1 (codes end-to-end) · 23.2 (`can()` affordances) | `password-rejection-codes.test.js` 6 tests (per-rule code+params; **minimum tracks a RUNTIME-changed policy**; wrapper derived from the structured result; `detail` asserted byte-identical) · `action-permissions.spec.ts` 9 specs (carry/ignore-malformed/mapping/unknown-code fallback + affordance matrix + non-boolean fail-safe) | **IMPLEMENTED + browser-verified** (N-093). Server 210 → client jest 102. Closes N-091 L2 + L5 |
+| **Open hardening/hygiene** (no decision yet) | 24.1 (`.gitattributes`, N-089 — awaiting approval) · 24.2 · 24.3 · 24.4 · 24.5 (Angular/CSP, N-079/N-080) · 24.6 (init latency) | — (verification defined per item when scheduled) | **OPEN, tracked** — recorded so none is silently dropped |
+
+**New properties since G3:** P-017…P-020 all owned by task 20.1 (D-049). No Phase-2 property is orphaned.
+
 ## E. Orphan and phase-gate check (current)
 
 - Requirements with no design mapping: **none** (all REQ-1..17 mapped above).
