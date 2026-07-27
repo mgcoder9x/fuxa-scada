@@ -18,6 +18,8 @@
 
 const express = require('express');
 
+const { BOUNDS } = require('../services/auth-config.service');
+
 /**
  * @param {{ authConfigService: any, requirePermission: (p: string) => Function }} deps
  * @returns {import('express').Router}
@@ -32,11 +34,17 @@ function createAuthConfigRouter(deps) {
 
     const actorOf = (req) => (req && req.authIdentity && req.authIdentity.username) || undefined;
 
-    // GET /api/auth/config — read the effective config (settings.read)
+    // GET /api/auth/config — read the effective config + the VALIDATION BOUNDS (settings.read)
+    //
+    // `bounds` is additive (D-049 Phase 2). It exists so the client can validate a patch and phrase a
+    // field message with the REAL limits without hand-copying them: a hand-copied constant is exactly
+    // the drift that made D-049's `settings.*` permissions ungrantable through the UI (N-091 L3). The
+    // bounds are public policy metadata (integer ranges), not data — they leak nothing, and the server
+    // still re-validates every PUT, so a client that ignores them gains nothing.
     router.get('/api/auth/config', requirePermission('settings.read'), async (req, res) => {
         try {
             const effective = await authConfigService.getEffective();
-            return res.status(200).json({ status: 'success', data: effective });
+            return res.status(200).json({ status: 'success', data: effective, bounds: BOUNDS });
         } catch (_e) {
             return res.status(503).json({ error: 'service_unavailable', message: 'Auth config unavailable' });
         }

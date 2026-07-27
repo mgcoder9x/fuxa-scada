@@ -28,6 +28,7 @@ import { LoginComponent } from './auth-management/login/login.component';
 import { UserManagementComponent } from './auth-management/user-management/user-management.component';
 import { RotatePasswordComponent } from './auth-management/rotate-password/rotate-password.component';
 import { RoleManagementComponent } from './auth-management/role-management/role-management.component';
+import { AuthSettingsComponent } from './auth-management/auth-settings/auth-settings.component';
 
 const appRoutes: Routes = [
     { path: '', component: HomeComponent},//, canActivate: [AuthGuard] },
@@ -68,6 +69,10 @@ const appRoutes: Routes = [
     { path: 'auth/rotate-password', component: RotatePasswordComponent },
     // Role-Management page (REQ-9, D-046). No AuthGuard (like auth/users); UX gate + server §05 authorize.
     { path: 'auth/roles', component: RoleManagementComponent },
+    // Runtime auth-configuration page (D-049 Phase 2). Same posture as the pages above: no AuthGuard —
+    // the page's own UX gate needs `settings.read` and the server (§05 requirePermission) authorizes
+    // every read/write independently, so the route itself carries no authority.
+    { path: 'auth/settings', component: AuthSettingsComponent },
 
     // otherwise redirect to home
     { path: '**', redirectTo: '' }

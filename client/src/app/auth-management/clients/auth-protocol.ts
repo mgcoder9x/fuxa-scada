@@ -225,6 +225,98 @@ export function mapPermissionsResponse(body: unknown): IdentityPermissions {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Runtime auth-configuration (D-049 · GET/PUT/DELETE /api/auth/config)
+// ---------------------------------------------------------------------------
+
+/** Brute-force tunables as stored/served by the module (design/13 §2). */
+export interface BruteForceConfig {
+    threshold: number;
+    baseThrottleMs: number;
+    backoffFactor: number;
+    maxThrottleMs: number;
+    failureWindowMs: number;
+}
+
+/** The effective runtime auth configuration (defaults ◁ settings.js baseline ◁ persisted override). */
+export interface AuthConfig {
+    passwordMinLength: number;
+    passwordBlocklist: string[];
+    tokenExpiresIn: string | number;
+    refreshTokenExpiresIn: string | number;
+    bcryptCost: number;
+    bruteForce: BruteForceConfig;
+}
+
+/**
+ * The server's VALIDATION BOUNDS, served alongside the config (D-049 Phase 2).
+ *
+ * The page validates against these instead of hand-copying the numbers: a hand-copied policy constant
+ * is exactly the drift that made `settings.*` ungrantable in the role editor (N-091 L3). If a bound
+ * changes server-side, the UI and its messages follow automatically.
+ */
+export interface AuthConfigBounds {
+    passwordMinLength: { min: number; max: number };
+    bcryptCost: { min: number; max: number };
+    blocklistMaxEntries: number;
+    blocklistMaxEntryLen: number;
+}
+
+/** What the settings page needs from `GET /api/auth/config`. */
+export interface AuthConfigView {
+    config: AuthConfig;
+    bounds: AuthConfigBounds | null;
+}
+
+function asNumber(v: unknown, fallback: number): number {
+    return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+function asDuration(v: unknown, fallback: string): string | number {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    return typeof v === 'string' && v !== '' ? v : fallback;
+}
+function asRange(v: unknown, min: number, max: number): { min: number; max: number } {
+    const o = asObject(v);
+    return { min: asNumber(o['min'], min), max: asNumber(o['max'], max) };
+}
+
+/**
+ * Map `GET /api/auth/config` to `AuthConfigView`. Defensive: every field degrades to the documented
+ * default rather than throwing, so a partial/older server response can never break the page. `bounds`
+ * is `null` when the server does not provide it (older build) — the presenter then falls back to
+ * server-side validation only, which is the honest behaviour (it must never invent limits).
+ */
+export function mapAuthConfigResponse(body: unknown): AuthConfigView {
+    const b = asObject(body);
+    const data = asObject('data' in b ? b['data'] : b);
+    const bf = asObject(data['bruteForce']);
+    const config: AuthConfig = {
+        passwordMinLength: asNumber(data['passwordMinLength'], 12),
+        passwordBlocklist: asStringArray(data['passwordBlocklist']),
+        tokenExpiresIn: asDuration(data['tokenExpiresIn'], '1h'),
+        refreshTokenExpiresIn: asDuration(data['refreshTokenExpiresIn'], '7d'),
+        bcryptCost: asNumber(data['bcryptCost'], 12),
+        bruteForce: {
+            threshold: asNumber(bf['threshold'], 5),
+            baseThrottleMs: asNumber(bf['baseThrottleMs'], 30000),
+            backoffFactor: asNumber(bf['backoffFactor'], 2),
+            maxThrottleMs: asNumber(bf['maxThrottleMs'], 900000),
+            failureWindowMs: asNumber(bf['failureWindowMs'], 0),
+        },
+    };
+    let bounds: AuthConfigBounds | null = null;
+    if (b['bounds'] && typeof b['bounds'] === 'object' && !Array.isArray(b['bounds'])) {
+        const raw = asObject(b['bounds']);
+        bounds = {
+            passwordMinLength: asRange(raw['passwordMinLength'], 8, 128),
+            bcryptCost: asRange(raw['bcryptCost'], 10, 15),
+            blocklistMaxEntries: asNumber(raw['blocklistMaxEntries'], 5000),
+            blocklistMaxEntryLen: asNumber(raw['blocklistMaxEntryLen'], 256),
+        };
+    }
+    return { config, bounds };
+}
+
 /**
  * Normalize a user/role admin error (HTTP status + error body) to a stable `AdminError`. Unknown or
  * absent identifiers fall back to `unexpected_error`. `field` is carried through when present

@@ -1,0 +1,185 @@
+<!--
+  Auth-Settings page (D-049 Phase 2). Renders the runtime auth policy and submits ONLY changed keys.
+  Accessibility: labelled controls, `aria-invalid` + `aria-describedby` per field, role="alert" regions,
+  aria-busy while loading. Security (§9): every message is a translated KEY — the server's English
+  validation strings are never rendered; field messages interpolate the SERVER-provided bounds.
+-->
+<section class="auth-settings" [attr.aria-busy]="presenter.loading">
+
+    <app-auth-nav></app-auth-nav>
+
+    <div class="auth-settings__checking" *ngIf="access === 'checking'">
+        {{ 'msg.loading' | translate }}
+    </div>
+
+    <div class="auth-settings__denied" role="alert" aria-live="assertive" *ngIf="access === 'denied'">
+        {{ (presenter.errorKey || 'msg.signin-unauthorized') | translate }}
+    </div>
+
+    <ng-container *ngIf="access === 'granted'">
+
+        <header class="auth-settings__header">
+            <h1 class="auth-settings__title">{{ 'settings.title' | translate }}</h1>
+            <span class="auth-settings__actions-top">
+                <button type="button" (click)="presenter.refresh()" [disabled]="presenter.loading">
+                    {{ 'general.refresh' | translate }}
+                </button>
+            </span>
+        </header>
+
+        <!-- A read-only identity (settings.read but not settings.manage) is told so, once, up front. -->
+        <p class="auth-settings__readonly" *ngIf="readOnly">{{ 'settings.read-only-hint' | translate }}</p>
+
+        <div class="auth-settings__saved" role="status" aria-live="polite" *ngIf="presenter.saved">
+            {{ 'msg.settings-saved' | translate }}
+        </div>
+
+        <div class="auth-settings__error" role="alert" aria-live="assertive" *ngIf="presenter.errorKey">
+            {{ presenter.errorKey | translate: presenter.errorParams }}
+        </div>
+
+        <div class="auth-settings__loading" *ngIf="presenter.loading">{{ 'msg.loading' | translate }}</div>
+
+        <form class="auth-settings__form" *ngIf="!presenter.loading" (ngSubmit)="presenter.submit()">
+
+            <fieldset class="auth-settings__group">
+                <legend>{{ 'settings.group-password' | translate }}</legend>
+
+                <div class="auth-settings__field">
+                    <label for="as-minlen">{{ 'settings.password-min-length' | translate }}</label>
+                    <input id="as-minlen" type="number" [(ngModel)]="form.passwordMinLength" name="passwordMinLength"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('passwordMinLength')"
+                           [attr.aria-describedby]="fieldError('passwordMinLength') ? 'as-minlen-err' : null">
+                    <span class="auth-settings__hint" *ngIf="presenter.bounds">
+                        {{ 'settings.range-hint' | translate: { min: presenter.bounds.passwordMinLength.min, max: presenter.bounds.passwordMinLength.max } }}
+                    </span>
+                    <span class="auth-settings__field-error" id="as-minlen-err" role="alert" *ngIf="fieldError('passwordMinLength') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-cost">{{ 'settings.bcrypt-cost' | translate }}</label>
+                    <input id="as-cost" type="number" [(ngModel)]="form.bcryptCost" name="bcryptCost"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('bcryptCost')"
+                           [attr.aria-describedby]="fieldError('bcryptCost') ? 'as-cost-err' : null">
+                    <span class="auth-settings__hint" *ngIf="presenter.bounds">
+                        {{ 'settings.range-hint' | translate: { min: presenter.bounds.bcryptCost.min, max: presenter.bounds.bcryptCost.max } }}
+                    </span>
+                    <span class="auth-settings__hint">{{ 'settings.bcrypt-cost-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" id="as-cost-err" role="alert" *ngIf="fieldError('bcryptCost') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-blocklist">{{ 'settings.password-blocklist' | translate }}</label>
+                    <textarea id="as-blocklist" rows="6" [(ngModel)]="form.blocklist" name="blocklist"
+                              [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('blocklist')"
+                              [attr.aria-describedby]="fieldError('blocklist') ? 'as-blocklist-err' : null"></textarea>
+                    <span class="auth-settings__hint">{{ 'settings.blocklist-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" id="as-blocklist-err" role="alert" *ngIf="fieldError('blocklist') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+            </fieldset>
+
+            <fieldset class="auth-settings__group">
+                <legend>{{ 'settings.group-token' | translate }}</legend>
+
+                <div class="auth-settings__field">
+                    <label for="as-token">{{ 'settings.token-expires' | translate }}</label>
+                    <input id="as-token" type="text" [(ngModel)]="form.tokenExpiresIn" name="tokenExpiresIn"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('tokenExpiresIn')">
+                    <span class="auth-settings__hint">{{ 'settings.duration-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('tokenExpiresIn') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-refresh">{{ 'settings.refresh-expires' | translate }}</label>
+                    <input id="as-refresh" type="text" [(ngModel)]="form.refreshTokenExpiresIn" name="refreshTokenExpiresIn"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('refreshTokenExpiresIn')">
+                    <span class="auth-settings__hint">{{ 'settings.duration-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('refreshTokenExpiresIn') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+            </fieldset>
+
+            <fieldset class="auth-settings__group">
+                <legend>{{ 'settings.group-bruteforce' | translate }}</legend>
+
+                <div class="auth-settings__field">
+                    <label for="as-bf-threshold">{{ 'settings.bf-threshold' | translate }}</label>
+                    <input id="as-bf-threshold" type="number" [(ngModel)]="form.bfThreshold" name="bfThreshold"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('bfThreshold')">
+                    <span class="auth-settings__hint">{{ 'settings.bf-threshold-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('bfThreshold') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-bf-base">{{ 'settings.bf-base-throttle' | translate }}</label>
+                    <input id="as-bf-base" type="number" [(ngModel)]="form.bfBaseThrottleMs" name="bfBaseThrottleMs"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('bfBaseThrottleMs')">
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('bfBaseThrottleMs') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-bf-factor">{{ 'settings.bf-backoff-factor' | translate }}</label>
+                    <input id="as-bf-factor" type="number" [(ngModel)]="form.bfBackoffFactor" name="bfBackoffFactor"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('bfBackoffFactor')">
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('bfBackoffFactor') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-bf-max">{{ 'settings.bf-max-throttle' | translate }}</label>
+                    <input id="as-bf-max" type="number" [(ngModel)]="form.bfMaxThrottleMs" name="bfMaxThrottleMs"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('bfMaxThrottleMs')">
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('bfMaxThrottleMs') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-bf-window">{{ 'settings.bf-failure-window' | translate }}</label>
+                    <input id="as-bf-window" type="number" [(ngModel)]="form.bfFailureWindowMs" name="bfFailureWindowMs"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('bfFailureWindowMs')">
+                    <span class="auth-settings__hint">{{ 'settings.bf-failure-window-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('bfFailureWindowMs') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+            </fieldset>
+
+            <!-- Actions: only a settings.manage identity gets them (server enforces independently). -->
+            <div class="auth-settings__actions" *ngIf="!readOnly">
+                <button type="submit" [disabled]="!presenter.canSubmit()">{{ 'general.save' | translate }}</button>
+                <button type="button" (click)="presenter.revert()" [disabled]="!presenter.isDirty || presenter.savePending">
+                    {{ 'general.cancel' | translate }}
+                </button>
+                <button type="button" class="auth-settings__reset" (click)="presenter.askReset()"
+                        [disabled]="presenter.resetPending || presenter.savePending">
+                    {{ 'settings.reset-defaults' | translate }}
+                </button>
+            </div>
+
+            <!-- Two-step confirmation: reset discards the whole persisted override at once. -->
+            <div class="auth-settings__confirm" role="alertdialog" aria-live="assertive" *ngIf="presenter.confirmingReset">
+                <p>{{ 'msg.settings-reset-confirm' | translate }}</p>
+                <button type="button" (click)="presenter.confirmReset()">{{ 'general.confirm' | translate }}</button>
+                <button type="button" (click)="presenter.cancelReset()">{{ 'general.cancel' | translate }}</button>
+            </div>
+
+        </form>
+
+    </ng-container>
+
+</section>

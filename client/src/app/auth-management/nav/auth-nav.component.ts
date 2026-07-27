@@ -12,6 +12,8 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
 
+import { ModulePermissionService } from '../services/module-permission.service';
+
 @Component({
     selector: 'app-auth-nav',
     standalone: true,
@@ -24,6 +26,12 @@ import { TranslateModule } from '@ngx-translate/core';
             <a class="auth-nav__tab" routerLink="/auth/roles" routerLinkActive="auth-nav__tab--active">
                 {{ 'nav.roles' | translate }}
             </a>
+            <!-- D-049 Phase 2: shown only to an identity that may READ the runtime config, so the
+                 navigator never advertises a page that would answer 403 (the D-051 affordance
+                 principle). The server authorizes the page independently — this is UX only. -->
+            <a class="auth-nav__tab" *ngIf="canReadSettings" routerLink="/auth/settings" routerLinkActive="auth-nav__tab--active">
+                {{ 'nav.settings' | translate }}
+            </a>
         </nav>
     `,
     styles: [`
@@ -32,4 +40,18 @@ import { TranslateModule } from '@ngx-translate/core';
         .auth-nav__tab--active { border-bottom-color: #1976d2; font-weight: 600; }
     `],
 })
-export class AuthNavComponent { }
+export class AuthNavComponent {
+
+    constructor(private permissions: ModulePermissionService) { }
+
+    /**
+     * Whether to offer the Settings tab. Reads the identity's SERVER-COMPUTED effective permissions
+     * (D-050), which the hosting page has already loaded via `ensureLoaded()` before rendering — so this
+     * is a cheap synchronous read, not a request. When authority is unknown the resolver defers to the
+     * server (returns true), and the page itself then renders the server's verdict; that is deliberate
+     * (fail-open in a UX hint, fail-closed in enforcement — see D-050).
+     */
+    get canReadSettings(): boolean {
+        return this.permissions.hasPermission('settings.read');
+    }
+}

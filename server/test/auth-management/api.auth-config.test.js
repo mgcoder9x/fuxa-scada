@@ -95,6 +95,24 @@ describe('GET /api/auth/config (settings.read gate — P-020)', function () {
         assert.equal(r.body.status, 'success');
         assert.equal(r.body.data.passwordMinLength, 12);
     });
+
+    /**
+     * D-049 Phase 2: the response also carries the VALIDATION BOUNDS so the settings page can validate
+     * a patch and phrase field messages with the REAL limits instead of hand-copying them. A hand-copied
+     * constant is precisely the drift that made `settings.*` ungrantable in the role editor (N-091 L3),
+     * so this assertion exists to keep the client honest — if a bound changes server-side, the UI follows.
+     */
+    it('200 also returns the validation BOUNDS (so the client never hand-copies limits)', async function () {
+        const { BOUNDS } = require('../../auth-management/services/auth-config.service');
+        const r = await call('GET', '/api/auth/config', { token: token('admin', -1) });
+        assert.ok(r.body.bounds, 'bounds must be present');
+        assert.deepEqual(r.body.bounds.passwordMinLength, BOUNDS.passwordMinLength);
+        assert.deepEqual(r.body.bounds.bcryptCost, BOUNDS.bcryptCost);
+        assert.equal(r.body.bounds.blocklistMaxEntries, BOUNDS.blocklistMaxEntries);
+        assert.equal(r.body.bounds.blocklistMaxEntryLen, BOUNDS.blocklistMaxEntryLen);
+        // sanity: the bounds are the real policy, not placeholders
+        assert.equal(r.body.bounds.bcryptCost.min >= 10, true, 'bcrypt floor must not drop below FUXA baseline (D-008)');
+    });
 });
 
 describe('PUT /api/auth/config (settings.manage gate + validate/persist — P-018/P-020)', function () {
