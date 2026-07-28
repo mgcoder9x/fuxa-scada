@@ -371,7 +371,7 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - _Requirements: 12.1, 9.2_
     - _DONE 2026-07-17 (D-048, N-086): browser-verified on a flipped instance (Setup→Users→`/auth/users`, Setup→Roles→`/auth/roles`, `/api/roles` 200, 0 console errors); non-flipped path verified by code (flag defaults false, boolean-coerced). RESIDUAL (open, task 24.2): a direct URL to `/users` / `/userRoles` under SUPERSEDE still renders FUXA's built-in page._
 
-- [ ] 20. Runtime auth-configuration (D-049, design/13-runtime-config.md)
+- [x] 20. Runtime auth-configuration (D-049, design/13-runtime-config.md)
   - [x] 20.1 Server: module-owned config store + live-apply service + gated endpoint
     - `auth_config` single-row table (defaults ◁ settings.js baseline ◁ DB override, fail-safe load), `AuthConfigService` (bounded validation → persist → live-apply → audit), `GET/PUT/DELETE /api/auth/config` behind new `settings.read`/`settings.manage`; hot-swap seams on token service / brute-force guard / hasher cost / password policy; `init()` runs BEFORE bootstrap so an overridden `bcryptCost` also covers the seeded admin
     - _Requirements: 16.1, 16.3, 4.6, 4.7_
