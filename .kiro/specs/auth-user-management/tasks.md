@@ -430,8 +430,9 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - The ~44 keys from N-079 and the 4 keys from D-051 were machine-translated across 12 locales; SCADA terminology needs a native pass
   - [ ] 24.5 Angular major upgrade (framework XSS advisories) + a real CSP
     - Deferred with evidence: FUXA has no SSR/hydration so ~3 advisories are N/A (N-079); a genuine CSP first requires removing the inline bootstrap script/handlers and the `eval`-based scripting feature (N-080), so a `'unsafe-inline' 'unsafe-eval'` CSP would be security theater
-  - [ ] 24.6 Boot-time investigation (init latency)
+  - [x] 24.6 Boot-time investigation (init latency)
     - Flip-boot init has been observed between ~12 s and ~62 s on the same instance (N-074/N-090/N-093 runs); intermittent, not root-caused, non-blocking
+    - _DONE 2026-07-28 (N-102): ROOT-CAUSED + FIXED. Our SUPERSEDE deferred-mount added `runtime.events.once('init-users-ok', build)`; FUXA's boot readiness gate (`runtime/index.js checkInit`) uses `listenerCount('init-users-ok')===0` as its "users init done" proxy, and since `checkInit` is registered first, it ran while our `build` listener was still counted (===1) ⇒ `init-runtime-ok` never fired early ⇒ boot fell to main.js's 60s fallback (proof: all 3 sub-inits succeed at ~3.5s yet `init in 63595ms`). Fix = `prependOnceListener` so `build` (and its wrapper removal) precedes `checkInit`. MEASURED boot 63595ms → 2783ms (~23×), auth module still mounts, server 216 unchanged. Fix is in OUR D-014 seam, not FUXA's gate._
 
 ## Notes
 

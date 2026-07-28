@@ -1760,3 +1760,36 @@
   Rule: after ANY server-code edit, restart the server before browser-verifying server behavior; the client
   static bundle updates from disk, the server process does not.
 - Task/traceability: `tasks.md` 20.3 → done; `traceability.md` §D.2 D-054 row updated (client done).
+
+
+### N-102 — Task 24.6 ROOT-CAUSED + FIXED: our SUPERSEDE deferred-mount defeated FUXA's boot readiness gate → 60s fallback every boot
+
+- Date: 2026-07-28. Root cause found by source + empirical boot-log analysis; fix verified by measurement.
+- Symptom (24.6): server boot fluctuated 12–62s; on this instance consistently ~60–63s (I lost ~60s per
+  restart this session). Non-blocking but it taxes every restart/deploy/test cycle.
+- Root cause (VERIFIED, and it is OUR code — not FUXA's): FUXA's runtime readiness gate
+  `runtime/index.js checkInit` emits `init-runtime-ok` (which lets `main.js` call `server.listen`) only when
+  `listenerCount('init-plugins-ok') === 0 && ...('init-users-ok') === 0 && ...('init-project-ok') === 0`, using
+  the listener count of its own three `once(checkInit)` registrations as a proxy for "all sub-inits done".
+  Our SUPERSEDE deferred-mount (`api/index.js`, D-014/N-068) added a SECOND listener on the same event:
+  `runtime.events.once('init-users-ok', build)`. `checkInit` is registered FIRST (runtime.init runs before
+  api.init), so when `init-users-ok` emits, Node invokes listeners in registration order: `checkInit` runs
+  while our `build` listener is STILL registered ⇒ `listenerCount('init-users-ok') === 1` ⇒ the gate condition
+  is false ⇒ `init-runtime-ok` is never emitted early ⇒ boot falls through to main.js's hardcoded 60s
+  "Don't wait any more" fallback (`setTimeout(..., 60000)`). PROOF from the boot log: all three sub-inits log
+  "successful" at ~T+3.5s (plugins .669 / project .670 / users .675) yet `FUXA init in 63595ms` (listen at
+  exactly T+60s). So it was NOT a failing init (the scheduler's "Failed to load project data" is a separate,
+  caught error in `scheduler-service.js`, a red herring) — it was the listenerCount proxy being inflated by us.
+- Root fix (one method, `api/index.js`): `runtime.events.once('init-users-ok', build)` →
+  `runtime.events.prependOnceListener('init-users-ok', build)` (kept `once`/`setImmediate` fallbacks). Prepending
+  makes `build` run — and its once-wrapper be removed — BEFORE `checkInit` evaluates, so `checkInit` sees count
+  0 and releases immediately. `build` does not depend on `checkInit`, so running it first is safe. This is a
+  fix to OUR authored deferred-mount block (the D-014 seam), not a change to FUXA's own logic; `checkInit`/the
+  60s fallback are left as-is (a defensive FUXA behaviour).
+- Verified (measured, same machine/instance, back-to-back): boot **63595ms → 2783ms** (~23× faster, ~61s
+  saved); `auth-management module mounted — SUPERSEDE active (D-014)` still logged (module builds on
+  `init-users-ok` exactly as before); server mocha **216 passing** (unchanged — the boot path isn't in the
+  suite); `node --check` clean.
+- Note: this only removes the SELF-INFLICTED 60s. A deployment where a genuine sub-init REJECTS would still hit
+  the 60s fallback (FUXA's gate emits `init-*-ok` only on success) — that is pre-existing FUXA behaviour, out of
+  our scope, and harmless (it still listens after 60s). Task 24.6 → done.

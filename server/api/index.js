@@ -455,7 +455,21 @@ function mountDeferredAuthModule(app) {
     // Race-safe: api.init runs synchronously right after runtime.init KICKED OFF users.init (async,
     // cannot have resolved yet), so subscribing now reliably catches `init-users-ok`. A defensive
     // fallback covers the (not-expected) case where the events emitter is unavailable.
-    if (runtime.events && typeof runtime.events.once === 'function') {
+    //
+    // PREPEND (not a plain `once`) — root fix for N-102 (~56s boot regression this seam caused):
+    // FUXA's runtime readiness gate (`runtime/index.js` checkInit) uses
+    // `listenerCount('init-users-ok') === 0` as its proxy for "users init finished" and only then
+    // emits `init-runtime-ok`, which is what lets main.js call `server.listen`. checkInit is registered
+    // on `init-users-ok` BEFORE this subscription, so with a plain `once` OUR `build` listener is still
+    // present (count === 1) at the moment checkInit runs during the emit → the gate never fires early
+    // and boot falls through to main.js's 60s "don't wait any more" fallback (MEASURED: init 63.6s vs
+    // ~4s actual; all three sub-inits succeed at ~3.5s yet listen waits 60s). Prepending our
+    // once-listener makes `build` run — and its wrapper be removed — BEFORE checkInit evaluates, so
+    // checkInit sees count 0 and releases immediately. `build` does not depend on checkInit, so order
+    // is safe for it.
+    if (runtime.events && typeof runtime.events.prependOnceListener === 'function') {
+        runtime.events.prependOnceListener('init-users-ok', build);
+    } else if (runtime.events && typeof runtime.events.once === 'function') {
         runtime.events.once('init-users-ok', build);
     } else {
         setImmediate(build);
