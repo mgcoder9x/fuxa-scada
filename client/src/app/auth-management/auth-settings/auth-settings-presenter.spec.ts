@@ -27,12 +27,17 @@ const VIEW: AuthConfigView = {
         refreshTokenExpiresIn: '7d',
         bcryptCost: 12,
         bruteForce: { threshold: 5, baseThrottleMs: 30000, backoffFactor: 2, maxThrottleMs: 900000, failureWindowMs: 0 },
+        jwtIssuer: null,
+        jwtAudience: null,
+        jwtAlgorithm: 'HS256',
     },
     bounds: {
         passwordMinLength: { min: 8, max: 128 },
         bcryptCost: { min: 10, max: 15 },
         blocklistMaxEntries: 5000,
         blocklistMaxEntryLen: 256,
+        jwtAlgorithms: ['HS256', 'HS384', 'HS512'],
+        jwtClaimMaxLen: 256,
     },
 };
 
@@ -297,5 +302,95 @@ describe('AuthSettingsPresenter server rejection, reset and revert', () => {
         expect(mapSettingsErrorKey('validation_error')).toBe(AUTH_SETTINGS_KEYS.invalid);
         expect(mapSettingsErrorKey('unexpected_error')).toBe(AUTH_SETTINGS_KEYS.failed);
         expect(mapSettingsErrorKey(undefined)).toBe(AUTH_SETTINGS_KEYS.failed);
+    });
+});
+
+
+describe('AuthSettingsPresenter — token-signing trio (D-054 Option B, task 20.3)', () => {
+    it('populates iss/aud as blank when unset (null) and shows the algorithm', () => {
+        const { presenter } = make();
+        presenter.init();
+        expect(presenter.form.jwtIssuer).toBe('');
+        expect(presenter.form.jwtAudience).toBe('');
+        expect(presenter.form.jwtAlgorithm).toBe('HS256');
+    });
+
+    it('is NOT dirty right after load (no spurious token-signing patch)', () => {
+        const { presenter } = make();
+        presenter.init();
+        expect(presenter.isDirty).toBe(false);
+        expect(presenter.buildPatch()).toEqual({});
+    });
+
+    it('setting an issuer produces a patch that touches token signing', () => {
+        const { presenter } = make();
+        presenter.init();
+        presenter.form.jwtIssuer = 'fuxa';
+        const patch = presenter.buildPatch();
+        expect(patch.jwtIssuer).toBe('fuxa');
+        expect(presenter.patchTouchesTokenSigning(patch)).toBe(true);
+    });
+
+    it('clearing an already-set issuer sends null (unset), not an empty string', () => {
+        const withIssuer = clone(VIEW);
+        withIssuer.config.jwtIssuer = 'fuxa';
+        const { presenter } = make({ load: () => of(withIssuer) });
+        presenter.init();
+        expect(presenter.form.jwtIssuer).toBe('fuxa');
+        presenter.form.jwtIssuer = '';
+        const patch = presenter.buildPatch();
+        expect(patch.jwtIssuer).toBeNull();
+    });
+
+    it('rejects an algorithm outside the server-served choices', () => {
+        const { presenter } = make();
+        presenter.init();
+        presenter.form.jwtAlgorithm = 'RS256';
+        expect(presenter.validate()).toBe(false);
+        expect(presenter.fieldError('jwtAlgorithm')).not.toBeNull();
+    });
+
+    it('rejects an issuer longer than the server claim-length bound', () => {
+        const { presenter } = make();
+        presenter.init();
+        presenter.form.jwtIssuer = 'x'.repeat(257);
+        expect(presenter.validate()).toBe(false);
+        expect(presenter.fieldError('jwtIssuer')).not.toBeNull();
+    });
+
+    it('a token-signing change requires an explicit confirm before it is sent', () => {
+        const { presenter, save } = make();
+        presenter.init();
+        presenter.form.jwtAlgorithm = 'HS384';
+        presenter.submit();
+        // first submit opens the confirmation and sends NOTHING
+        expect(presenter.confirmingTokenSigning).toBe(true);
+        expect(save).not.toHaveBeenCalled();
+        // confirming proceeds with the save
+        presenter.confirmTokenSigning();
+        expect(presenter.confirmingTokenSigning).toBe(false);
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save.mock.calls[0][0].jwtAlgorithm).toBe('HS384');
+    });
+
+    it('cancelling the token-signing confirm sends nothing', () => {
+        const { presenter, save } = make();
+        presenter.init();
+        presenter.form.jwtAudience = 'scada';
+        presenter.submit();
+        expect(presenter.confirmingTokenSigning).toBe(true);
+        presenter.cancelTokenSigning();
+        expect(presenter.confirmingTokenSigning).toBe(false);
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    it('a NON-token-signing change (password length) saves WITHOUT the token-signing confirm', () => {
+        const { presenter, save } = make();
+        presenter.init();
+        presenter.form.passwordMinLength = '16';
+        presenter.submit();
+        expect(presenter.confirmingTokenSigning).toBe(false);
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save.mock.calls[0][0].passwordMinLength).toBe(16);
     });
 });

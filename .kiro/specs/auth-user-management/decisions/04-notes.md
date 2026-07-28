@@ -1730,3 +1730,33 @@
   (server-only change). **PENDING (next unit): client protocol/type + `AuthConfigPatch` keys + presenter form
   fields + validate/buildPatch + the "Advanced — Token signing" section with a confirm-before-apply dialog
   ("this signs out all sessions") + 13-locale i18n + presenter specs + browser e2e.**
+
+
+### N-101 — Task 20.3 (D-054 Option B) CLIENT done + browser e2e; + a real testing gotcha (restart the server after server edits)
+
+- Date: 2026-07-28. Completes task 20.3 (the client half of D-054 Option B).
+- Client changes: `auth-protocol.ts` (AuthConfig +jwtIssuer/jwtAudience/jwtAlgorithm; AuthConfigBounds
+  +jwtAlgorithms/jwtClaimMaxLen; `mapAuthConfigResponse` carries them, iss/aud→null when blank/absent, alg
+  defaults HS256); `auth-config.client.ts` `AuthConfigPatch` +the three keys (iss/aud accept null);
+  `auth-settings-presenter.ts` (form fields; applyView; validate — alg ∈ server choices, iss/aud length ≤
+  server bound, both OPTIONAL; buildPatch — empty iss/aud ⇒ null, alg compared to `base||'HS256'` to avoid a
+  spurious dirty; `patchTouchesTokenSigning` + a confirm gate: first submit opens `confirmingTokenSigning` and
+  sends nothing, `confirmTokenSigning()` re-enters past the gate, `cancelTokenSigning()` aborts); the component
+  template's "Advanced — Token signing" fieldset (HS-only `<select>` from `bounds.jwtAlgorithms`, iss/aud text)
+  + a danger confirm banner; component `algorithmChoices` getter; 9 i18n keys × 13 locales; 9 presenter specs.
+- Verified: client jest **136 passing / 11 suites** (was 127; +9); `ng build --configuration production` exit 0;
+  all 13 locale JSON re-parsed valid. LIVE browser e2e (Playwright, security ON): page shows the Advanced
+  section with the three fields and HS256/384/512 (from server bounds), all labels translated; selecting HS384
+  + Save opens the confirm dialog **"Changing the token issuer, audience, or algorithm will sign out ALL active
+  users…"**; Confirm ⇒ `PUT /api/auth/config` **200** + "Settings saved and applied."; the still-held HS256
+  access token then gets **401 on the next `GET /api/auth/config`** (network-verified 200→200→401) → the page
+  shows "Unauthorized!" — the session-ending behavior that IS Option B; finally **Reset to defaults** ⇒
+  `DELETE` 200 restored HS256/baseline (instance left clean, no persisted override).
+- **GOTCHA (cost real time — worth recording): a running `node main.js` caches the module graph in memory, so
+  editing `auth-config.service.js` on disk had NO effect until the server was RESTARTED.** The first live save
+  returned `400 {"errors":["unknown field: jwtAlgorithm"]}` because the OLD in-memory service (pre-edit allowed
+  set) validated it, even though the file + `node --check` + mocha (which re-require fresh) were all correct.
+  Fix: `control_pwsh_process stop` + `start` the server, wait ~60–75s for the N-090 init, THEN browser-test.
+  Rule: after ANY server-code edit, restart the server before browser-verifying server behavior; the client
+  static bundle updates from disk, the server process does not.
+- Task/traceability: `tasks.md` 20.3 → done; `traceability.md` §D.2 D-054 row updated (client done).

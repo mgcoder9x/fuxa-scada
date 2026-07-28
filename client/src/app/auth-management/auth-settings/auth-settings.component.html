@@ -159,6 +159,47 @@
                 </div>
             </fieldset>
 
+            <!-- Advanced — Token signing (D-054 Option B). Editing any of these ends every session:
+                 existing tokens then fail the server's strict verify, so users must sign in again. The
+                 Save flow shows an explicit confirm before sending. iss/aud empty = not enforced. -->
+            <fieldset class="auth-settings__group auth-settings__group--advanced">
+                <legend>{{ 'settings.group-token-signing' | translate }}</legend>
+                <p class="auth-settings__hint auth-settings__hint--warn">{{ 'settings.token-signing-hint' | translate }}</p>
+
+                <div class="auth-settings__field">
+                    <label for="as-jwt-iss">{{ 'settings.jwt-issuer' | translate }}</label>
+                    <input id="as-jwt-iss" type="text" [(ngModel)]="form.jwtIssuer" name="jwtIssuer"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('jwtIssuer')"
+                           [attr.aria-describedby]="fieldError('jwtIssuer') ? 'as-jwt-iss-err' : null">
+                    <span class="auth-settings__hint">{{ 'settings.jwt-optional-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" id="as-jwt-iss-err" role="alert" *ngIf="fieldError('jwtIssuer') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-jwt-aud">{{ 'settings.jwt-audience' | translate }}</label>
+                    <input id="as-jwt-aud" type="text" [(ngModel)]="form.jwtAudience" name="jwtAudience"
+                           [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('jwtAudience')"
+                           [attr.aria-describedby]="fieldError('jwtAudience') ? 'as-jwt-aud-err' : null">
+                    <span class="auth-settings__hint">{{ 'settings.jwt-optional-hint' | translate }}</span>
+                    <span class="auth-settings__field-error" id="as-jwt-aud-err" role="alert" *ngIf="fieldError('jwtAudience') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+
+                <div class="auth-settings__field">
+                    <label for="as-jwt-alg">{{ 'settings.jwt-algorithm' | translate }}</label>
+                    <select id="as-jwt-alg" [(ngModel)]="form.jwtAlgorithm" name="jwtAlgorithm"
+                            [disabled]="readOnly" [attr.aria-invalid]="!!fieldError('jwtAlgorithm')">
+                        <option *ngFor="let alg of algorithmChoices" [value]="alg">{{ alg }}</option>
+                    </select>
+                    <span class="auth-settings__field-error" role="alert" *ngIf="fieldError('jwtAlgorithm') as e">
+                        {{ e.key | translate: e.params }}
+                    </span>
+                </div>
+            </fieldset>
+
             <!-- Actions: only a settings.manage identity gets them (server enforces independently). -->
             <div class="auth-settings__actions" *ngIf="!readOnly">
                 <button type="submit" [disabled]="!presenter.canSubmit()">{{ 'general.save' | translate }}</button>
@@ -176,6 +217,13 @@
                 <p>{{ 'msg.settings-reset-confirm' | translate }}</p>
                 <button type="button" (click)="presenter.confirmReset()">{{ 'general.confirm' | translate }}</button>
                 <button type="button" (click)="presenter.cancelReset()">{{ 'general.cancel' | translate }}</button>
+            </div>
+
+            <!-- Confirm a session-ending token-signing change (D-054 Option B) before it is sent. -->
+            <div class="auth-settings__confirm auth-settings__confirm--danger" role="alertdialog" aria-live="assertive" *ngIf="presenter.confirmingTokenSigning">
+                <p>{{ 'msg.settings-token-signing-confirm' | translate }}</p>
+                <button type="button" (click)="presenter.confirmTokenSigning()">{{ 'general.confirm' | translate }}</button>
+                <button type="button" (click)="presenter.cancelTokenSigning()">{{ 'general.cancel' | translate }}</button>
             </div>
 
         </form>

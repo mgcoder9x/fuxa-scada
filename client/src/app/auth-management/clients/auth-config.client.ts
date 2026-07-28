@@ -16,6 +16,11 @@ export interface AuthConfigPatch {
     tokenExpiresIn?: string | number;
     refreshTokenExpiresIn?: string | number;
     bcryptCost?: number;
+    // D-054 Option B — token-signing trio. iss/aud accept `null` to unset (D-029); a change is a
+    // confirmed, session-ending edit (existing tokens then fail the unchanged strict verify ⇒ re-login).
+    jwtIssuer?: string | null;
+    jwtAudience?: string | null;
+    jwtAlgorithm?: string;
     bruteForce?: Partial<{
         threshold: number;
         baseThrottleMs: number;

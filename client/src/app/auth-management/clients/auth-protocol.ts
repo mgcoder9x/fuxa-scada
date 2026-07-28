@@ -246,6 +246,11 @@ export interface AuthConfig {
     refreshTokenExpiresIn: string | number;
     bcryptCost: number;
     bruteForce: BruteForceConfig;
+    // Token-signing "Advanced" trio (D-054 Option B, task 20.3). iss/aud are `null` when unset (D-029);
+    // changing any of the three is a confirmed, session-ending change (existing tokens then fail verify).
+    jwtIssuer: string | null;
+    jwtAudience: string | null;
+    jwtAlgorithm: string;
 }
 
 /**
@@ -260,6 +265,10 @@ export interface AuthConfigBounds {
     bcryptCost: { min: number; max: number };
     blocklistMaxEntries: number;
     blocklistMaxEntryLen: number;
+    // D-054 Option B: the HS-only algorithm choices + the iss/aud length limit, served so the page
+    // renders the <select> options and the length check FROM the server (never a hand-copied list).
+    jwtAlgorithms: string[];
+    jwtClaimMaxLen: number;
 }
 
 /** What the settings page needs from `GET /api/auth/config`. */
@@ -303,6 +312,10 @@ export function mapAuthConfigResponse(body: unknown): AuthConfigView {
             maxThrottleMs: asNumber(bf['maxThrottleMs'], 900000),
             failureWindowMs: asNumber(bf['failureWindowMs'], 0),
         },
+        // D-054 Option B — token-signing trio. iss/aud: a non-empty string, else null (unset).
+        jwtIssuer: typeof data['jwtIssuer'] === 'string' && data['jwtIssuer'] !== '' ? data['jwtIssuer'] as string : null,
+        jwtAudience: typeof data['jwtAudience'] === 'string' && data['jwtAudience'] !== '' ? data['jwtAudience'] as string : null,
+        jwtAlgorithm: typeof data['jwtAlgorithm'] === 'string' && data['jwtAlgorithm'] !== '' ? data['jwtAlgorithm'] as string : 'HS256',
     };
     let bounds: AuthConfigBounds | null = null;
     if (b['bounds'] && typeof b['bounds'] === 'object' && !Array.isArray(b['bounds'])) {
@@ -312,6 +325,10 @@ export function mapAuthConfigResponse(body: unknown): AuthConfigView {
             bcryptCost: asRange(raw['bcryptCost'], 10, 15),
             blocklistMaxEntries: asNumber(raw['blocklistMaxEntries'], 5000),
             blocklistMaxEntryLen: asNumber(raw['blocklistMaxEntryLen'], 256),
+            // D-054 Option B: HS-only choices; default to the known HS set if an older server omits them.
+            jwtAlgorithms: Array.isArray(raw['jwtAlgorithms']) && raw['jwtAlgorithms'].length
+                ? asStringArray(raw['jwtAlgorithms']) : ['HS256', 'HS384', 'HS512'],
+            jwtClaimMaxLen: asNumber(raw['jwtClaimMaxLen'], 256),
         };
     }
     return { config, bounds };

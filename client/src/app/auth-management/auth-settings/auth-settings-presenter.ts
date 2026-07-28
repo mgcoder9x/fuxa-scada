@@ -106,12 +106,19 @@ export interface SettingsForm {
     bfBackoffFactor: string | number;
     bfMaxThrottleMs: string | number;
     bfFailureWindowMs: string | number;
+    // D-054 Option B — token-signing "Advanced" trio. Always strings (text inputs + a <select>); an
+    // EMPTY iss/aud means "unset" (→ null in the patch). Editing any of these is a confirmed,
+    // session-ending change.
+    jwtIssuer: string;
+    jwtAudience: string;
+    jwtAlgorithm: string;
 }
 
 const EMPTY_FORM: SettingsForm = {
     passwordMinLength: '', bcryptCost: '', tokenExpiresIn: '', refreshTokenExpiresIn: '',
     blocklist: '', bfThreshold: '', bfBaseThrottleMs: '', bfBackoffFactor: '', bfMaxThrottleMs: '',
     bfFailureWindowMs: '',
+    jwtIssuer: '', jwtAudience: '', jwtAlgorithm: 'HS256',
 };
 
 /** Split a textarea into blocklist entries: trimmed, non-empty, de-duplicated, order preserved. */
@@ -140,6 +147,11 @@ export class AuthSettingsPresenter {
     saved = false;
     /** Reset confirmation gate: the destructive action needs two steps. */
     confirmingReset = false;
+    /** Token-signing confirmation gate (D-054 Option B): a session-ending iss/aud/alg change needs an
+     *  explicit confirm before it is sent. Set true when a submit would change token signing. */
+    confirmingTokenSigning = false;
+    /** One-shot flag set by {@link confirmTokenSigning} so the re-entered submit bypasses the gate. */
+    private tokenSigningConfirmed = false;
 
     /** Server bounds, or null when the server did not provide them (then range checks are skipped). */
     bounds: AuthConfigBounds | null = null;
@@ -217,6 +229,10 @@ export class AuthSettingsPresenter {
             bfBackoffFactor: String(c.bruteForce.backoffFactor),
             bfMaxThrottleMs: String(c.bruteForce.maxThrottleMs),
             bfFailureWindowMs: String(c.bruteForce.failureWindowMs),
+            // D-054 Option B — iss/aud show blank when unset (null); algorithm defaults to HS256.
+            jwtIssuer: c.jwtIssuer == null ? '' : String(c.jwtIssuer),
+            jwtAudience: c.jwtAudience == null ? '' : String(c.jwtAudience),
+            jwtAlgorithm: String(c.jwtAlgorithm || 'HS256'),
         };
         this.fieldErrors = {};
     }
@@ -276,6 +292,22 @@ export class AuthSettingsPresenter {
         for (const field of ['tokenExpiresIn', 'refreshTokenExpiresIn'] as (keyof SettingsForm)[]) {
             if (this.raw(field) === '') {
                 errors[field] = { key: 'msg.settings-field-required' };
+            }
+        }
+
+        // D-054 Option B — token-signing trio. iss/aud are OPTIONAL (empty = unset), so only a non-empty
+        // value is length-checked (against the server bound when present); algorithm must be one of the
+        // server-served HS-only choices. These never invent a limit the server did not provide.
+        for (const field of ['jwtIssuer', 'jwtAudience'] as (keyof SettingsForm)[]) {
+            const v = this.raw(field);
+            if (v !== '' && this.bounds && v.length > this.bounds.jwtClaimMaxLen) {
+                errors[field] = { key: 'msg.settings-field-maxlen', params: { max: this.bounds.jwtClaimMaxLen } };
+            }
+        }
+        if (this.bounds && Array.isArray(this.bounds.jwtAlgorithms) && this.bounds.jwtAlgorithms.length) {
+            const alg = this.raw('jwtAlgorithm');
+            if (alg !== '' && !this.bounds.jwtAlgorithms.includes(alg)) {
+                errors.jwtAlgorithm = { key: 'msg.settings-field-invalid' };
             }
         }
 
@@ -348,7 +380,27 @@ export class AuthSettingsPresenter {
         }
         if (Object.keys(bf).length > 0) patch.bruteForce = bf;
 
+        // D-054 Option B — token-signing trio. An empty iss/aud means "unset" ⇒ null; compare against the
+        // loaded value (also string|null) so an unchanged field is never resubmitted.
+        const nextIssuer = this.raw('jwtIssuer') === '' ? null : this.raw('jwtIssuer');
+        if (nextIssuer !== (base.jwtIssuer ?? null)) patch.jwtIssuer = nextIssuer;
+        const nextAudience = this.raw('jwtAudience') === '' ? null : this.raw('jwtAudience');
+        if (nextAudience !== (base.jwtAudience ?? null)) patch.jwtAudience = nextAudience;
+        const nextAlg = this.raw('jwtAlgorithm');
+        if (nextAlg !== '' && nextAlg !== (base.jwtAlgorithm || 'HS256')) patch.jwtAlgorithm = nextAlg;
+
         return patch;
+    }
+
+    /**
+     * Does this patch change any token-signing field (iss/aud/alg)? Such a change is session-ending
+     * (existing tokens then fail the server's unchanged strict verify ⇒ all users re-login), so the UI
+     * must confirm it explicitly (D-054 Option B). Uses `hasOwnProperty` because `null` (unset) is a valid,
+     * intended value that must still count as a change.
+     */
+    patchTouchesTokenSigning(patch: AuthConfigPatch): boolean {
+        return ['jwtIssuer', 'jwtAudience', 'jwtAlgorithm'].some(
+            (k) => Object.prototype.hasOwnProperty.call(patch, k));
     }
 
     /** True when the form differs from the loaded config (drives the Save control). */
@@ -376,6 +428,34 @@ export class AuthSettingsPresenter {
         }
         const patch = this.buildPatch();
         if (Object.keys(patch).length === 0) return;
+        // D-054 Option B: a token-signing change ends every session (existing tokens fail the server's
+        // strict verify ⇒ re-login). Require an explicit confirm before sending — the first submit opens
+        // the confirmation and returns; confirmTokenSigning() re-enters with the one-shot flag set.
+        if (this.patchTouchesTokenSigning(patch) && !this.tokenSigningConfirmed) {
+            this.confirmingTokenSigning = true;
+            return;
+        }
+        this.confirmingTokenSigning = false;
+        this.tokenSigningConfirmed = false;
+        this._save(patch);
+    }
+
+    /** Confirm the session-ending token-signing change and proceed (dialog OK, D-054 Option B). */
+    confirmTokenSigning(): void {
+        if (!this.confirmingTokenSigning) return;
+        this.tokenSigningConfirmed = true;
+        this.confirmingTokenSigning = false;
+        this.submit();
+    }
+
+    /** Cancel the token-signing confirmation (dialog Cancel) — nothing is sent. */
+    cancelTokenSigning(): void {
+        this.confirmingTokenSigning = false;
+        this.tokenSigningConfirmed = false;
+    }
+
+    /** Send the patch (shared by submit + confirmTokenSigning). @private */
+    private _save(patch: AuthConfigPatch): void {
         this.savePending = true;
         this.errorKey = null;
         this.saved = false;

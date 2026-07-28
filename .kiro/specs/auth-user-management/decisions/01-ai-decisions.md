@@ -931,8 +931,9 @@
 
 ### D-054 — Runtime iss/aud/alg (task 20.3): design-validation + approach fork (PROPOSED — pending user choice)
 
-- Date: 2026-07-28. Status: **Active (CONFIRMED) — Option B chosen by the user 2026-07-28; SERVER implemented +
-  tested; client UI pending** (N-100). Owner area: D-049 Phase 3 / design/13 §12 / task 20.3.
+- Date: 2026-07-28. Status: **Active (CONFIRMED) — Option B chosen by the user 2026-07-28; server + client
+  implemented + browser-verified end-to-end** (N-100 server, N-101 client). Owner area: D-049 Phase 3 /
+  design/13 §12 / task 20.3.
 - Context: Phase 2 (D-049, N-096) shipped the zero-side-effect runtime config (password policy, bcrypt cost,
   token TTLs, brute-force). Phase 3 (20.3) is the "careful" trio `jwtIssuer`/`jwtAudience`/`jwtAlgorithm`.
   design/13 §12 RECOMMENDED a zero-logout OVERLAP WINDOW for iss/aud and confirmed re-login for alg, and §11.3
@@ -980,5 +981,10 @@
   event). `GET /api/auth/config` now serves `bounds.jwtAlgorithms` + `bounds.jwtClaimMaxLen` so the client
   renders the choices from the server (N-091 L3 discipline). Verified: server suite **216 passing** (+5:
   bounds-carry-HS-only, valid iss/aud/alg round-trip, null-unset, RS256 rejected, empty-issuer rejected).
-  **Still pending: the client "Advanced — Token signing" UI section + its confirm-before-apply dialog +
-  i18n + presenter specs + browser e2e.**
+  **Client done (N-101):** protocol types + `AuthConfigPatch` + presenter form/validate/buildPatch (empty
+  iss/aud ⇒ null) + a `patchTouchesTokenSigning` gate that opens a **confirm-before-apply** dialog ("this
+  signs out ALL active users") + the "Advanced — Token signing" template section (HS-only `<select>` fed from
+  server `bounds.jwtAlgorithms`) + 9 i18n keys × 13 locales + 9 presenter specs. Verified: client jest **136**,
+  prod build 0, and a full LIVE browser e2e — change alg → confirm dialog → PUT 200 "saved and applied" → the
+  in-flight HS256 token then gets **401 on the next GET** (session-ending, exactly Option B) → Reset to
+  defaults (DELETE 200) restored HS256. Task 20.3 COMPLETE.

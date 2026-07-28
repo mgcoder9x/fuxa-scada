@@ -50,5 +50,11 @@ export class AuthSettingsComponent implements OnInit {
     get form(): SettingsForm { return this.presenter.form; }
     get readOnly(): boolean { return this.presenter.readOnly; }
 
+    /** HS-only algorithm choices for the <select>, served by the server (fallback = known HS set). */
+    get algorithmChoices(): string[] {
+        const fromServer = this.presenter.bounds && this.presenter.bounds.jwtAlgorithms;
+        return fromServer && fromServer.length ? fromServer : ['HS256', 'HS384', 'HS512'];
+    }
+
     fieldError(field: keyof SettingsForm): FieldError | null { return this.presenter.fieldError(field); }
 }
