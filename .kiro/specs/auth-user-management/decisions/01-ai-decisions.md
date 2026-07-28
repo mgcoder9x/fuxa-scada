@@ -842,3 +842,47 @@
 - Rationale (precise): (a) the code — not the text — selects the message, so §9 is preserved intact while the UI becomes specific; (b) `params` is REQUIRED rather than cosmetic, because D-049 makes the minimum length changeable at runtime, so any hard-coded "12" in a translation string would become a lie; (c) everything is additive — `message` unchanged ⇒ no existing consumer or test breaks (proved: the 195-test baseline stayed green before the new tests were added); (d) an unrecognized future code degrades to the generic key, so the server can add codes without a client release; (e) L5 is only honest UI, NOT a security control — the server authorizes every mutation, so hiding a button removes confusion, not protection; a `can` seam that is absent offers everything (pre-D-051 behavior), and a non-boolean seam result is treated as NOT allowed (fail-safe affordance).
 - Alternatives considered: (i) **display the server `message` directly** — rejected: violates §9, ships untranslated English to 12 locales, and couples the UI to server prose; (ii) **have the client re-derive the policy from `GET /api/auth/config`** — rejected: that endpoint requires `settings.read`, which a user-admin need not hold ⇒ the N-091 L1 deadlock pattern all over again; (iii) **hard-code "at least 12 characters" in the i18n string** — rejected: D-049 can change the minimum at runtime, so the text would silently lie; (iv) **disable rather than hide the action buttons** — considered and not chosen for the row actions (a disabled button still advertises the operation and invites "why?" tickets); revisit if a future UX spec prefers disabled+tooltip.
 - Verification: new server test file `password-rejection-codes.test.js` 6/6 (per-rule codes/params, min tracks a RUNTIME-changed policy, wrapper derived from the structured result, and service outcomes carrying the code with `detail` asserted byte-identical); new client spec `action-permissions.spec.ts` 9/9 (carry/ignore-malformed/mapping/fallback + affordance matrix incl. the non-boolean fail-safe); server suite **210**, client jest **102 / 9 suites**, prod build exit 0, diagnostics 0. LIVE: `POST /api/users` returns `detailCode:"password_too_short" detailParams:{min:12}` and `detailCode:"password_blocklisted"`; in the BROWSER the form shows **"Password must be at least 12 characters"** and **"This password is too common. Choose a different one."**, and `operator1` (only `user.read`) sees the 2-row list with **no "Add User", 0 Edit, 0 Remove** while admin sees all of them.
+
+
+### D-052 — Legacy `/users` + `/userRoles` route redirect under SUPERSEDE (closes the D-048 residual)
+
+- Date: 2026-07-28. Status: **Active (CONFIRMED)** — implemented + browser-verified this turn (task 24.2).
+- Context: D-048 re-pointed the editor Setup menu to the module pages (`/auth/users`, `/auth/roles`) when
+  `authModuleEnabled` is on, but explicitly left a residual: a **direct URL** to FUXA's built-in `/users`
+  or `/userRoles` still rendered the legacy FUXA page, a way to reach the identity surface the module is
+  supposed to own. For a commercial SUPERSEDE this is a consistency/authority gap (two live entry points to
+  the same conceptual resource). Grep confirmed the only navigational entry points are: the Setup menu
+  (D-048, gated), the direct URL (this), and `header.component.ts editorModeRouteKey` (a detection list, not
+  a navigation) — so gating the two routes fully closes it.
+- Decision: a module-owned `LegacyUserAdminRedirectGuard` placed **before** `AuthGuard` on the existing
+  `/users` and `/userRoles` route definitions. Under SUPERSEDE it returns a `UrlTree` (redirect) to the
+  target read from the route's static `data.supersedeRedirect` (`/auth/users`, resp. `/auth/roles`), so ONE
+  guard serves both and neither the legacy page NOR FUXA's login dialog appears; when SUPERSEDE is OFF it
+  returns `true` and `AuthGuard` runs exactly as before (non-flipped deployments byte-identical, shared-bundle
+  safe — same posture as D-048).
+- Root-correctness (the important part): `authModuleEnabled` is mirrored client-side ASYNCHRONOUSLY
+  (`SettingsService.init()` → `GET /api/settings`) and defaults to `false`. A cold direct-URL load of `/users`
+  runs the guard BEFORE `/api/settings` resolves, so reading the flag synchronously would see `false` and
+  leak the legacy page even under SUPERSEDE — the exact N-096-class browser-only race (green in jest+build,
+  broken live). The guard therefore GATES on `SettingsService.loaded$` (`filter(loaded), take(1)`) so the
+  flag is authoritative before it decides. The decision logic is a pure, framework-free `legacyAdminRedirect$`
+  helper (rxjs only, no Angular) so the race is jest-verifiable headlessly (D-036); the thin `@Injectable`
+  shell wires `SettingsService` + `Router`.
+- Alternatives considered: (i) **CanMatch that unmatches the route under SUPERSEDE** — rejected: the `**`
+  catch-all would then send `/users` to `''` (home), not to the module page, losing the user's intent;
+  (ii) **read the flag synchronously in the guard** — rejected: the loaded$-race above (would render the
+  legacy page on a cold load); (iii) **delete the legacy `/users`/`/userRoles` routes outright** — rejected:
+  not reversible, breaks non-flipped deployments that share the bundle, and exceeds the flag-gated D-048
+  contract; (iv) **redirect in the legacy components' `ngOnInit`** — rejected: the legacy page would still
+  briefly construct/flash and it is a heavier edit than a guard.
+- Boundary: this touches FUXA-core `app.routing.ts` in place (guard added to 2 existing routes + import +
+  `data`), logged as **DV-013**. UX/consistency only — the server (§05) stays the authoritative boundary and
+  the module pages carry their own UX gate + server authorization.
+- Verification: pure helper spec `legacy-admin-route.spec.ts` 4/4 incl. the RACE test (guard must NOT decide
+  while `loaded$` is false, then decides with the post-load flag) and the `take(1)` "no re-decide on settings
+  churn" test; full client jest **127 passing / 11 suites** (was 123/10); `ng build --configuration production`
+  exit 0 (guard now wired, no "unused" warning). LIVE BROWSER (Playwright MCP, `authModuleEnabled:true`,
+  signed in as admin): `GET /users` lands on `/auth/users`, `GET /userRoles` lands on `/auth/roles`, the
+  `/auth/roles` page renders the real role table (`viewer_test` → `user.read`) with admin affordances, **0
+  console errors**. The flag-OFF path is byte-identical by construction (guard returns `true`, AuthGuard
+  unchanged) — verified by code, same basis as D-048/N-086.

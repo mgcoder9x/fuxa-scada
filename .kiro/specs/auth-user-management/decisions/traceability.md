@@ -116,7 +116,8 @@ deep review opened).
 | **N-091** deep live acceptance test (non-admin RBAC, policy, brute-force, hot-swap) | 21 | live UI + API matrix on the real instance | **DONE**; produced defects L1/L2/L3/L5 + the duplicate `ADMIN_PERMISSION_SET` finding |
 | **D-050** server-authoritative permissions (`GET /api/auth/permissions`, `requireAuthenticated`) | 22.1 · 22.2 (single-source admin set) · 22.3 (client resolver) | `api.permissions.test.js` 9 tests — incl. **explicit L1 regression** (a `user.read`-only identity gets 200 + its own set), **L3 regression** (catalog exposes `settings.*`), gated-identity ⇒ `effective: []` (**P-009** consistency), and **"effective AGREES with enforcement"** (every reported permission is `isAllowed`, every withheld one denied); `permissions-protocol.spec.ts` (client) | **IMPLEMENTED + live/browser-verified** (N-092). Server 204 → client jest 93. Closes N-091 L1 + L3 |
 | **D-051** rejection codes + action affordances | 23.1 (codes end-to-end) · 23.2 (`can()` affordances) | `password-rejection-codes.test.js` 6 tests (per-rule code+params; **minimum tracks a RUNTIME-changed policy**; wrapper derived from the structured result; `detail` asserted byte-identical) · `action-permissions.spec.ts` 9 specs (carry/ignore-malformed/mapping/unknown-code fallback + affordance matrix + non-boolean fail-safe) | **IMPLEMENTED + browser-verified** (N-093). Server 210 → client jest 102. Closes N-091 L2 + L5 |
-| **Open hardening/hygiene** (no decision yet) | 24.1 (`.gitattributes`, N-089 — awaiting approval) · 24.2 · 24.3 · 24.4 · 24.5 (Angular/CSP, N-079/N-080) · 24.6 (init latency) | — (verification defined per item when scheduled) | **OPEN, tracked** — recorded so none is silently dropped |
+| **D-052** legacy `/users`+`/userRoles` SUPERSEDE redirect (closes the D-048 residual) | 24.2 (redirect guard) | `legacy-admin-route.spec.ts` 4 specs (pure `legacyAdminRedirect$`: allow-when-legacy, redirect-when-supersede, **RACE — waits on `loaded$` before deciding**, `take(1)` no-re-decide) · guard shell `legacy-user-admin-redirect.guard.ts` + FUXA-core wiring via DV-013 verified by prod build + live browser | **IMPLEMENTED + browser-verified** (N-097). Client jest 127/11, prod build 0. LIVE: `/users`→`/auth/users`, `/userRoles`→`/auth/roles`, 0 console errors |
+| **Open hardening/hygiene** (no decision yet) | 24.1 (`.gitattributes`, N-089 — awaiting approval) · 24.3 · 24.4 · 24.5 (Angular/CSP, N-079/N-080) · 24.6 (init latency) | — (verification defined per item when scheduled) | **OPEN, tracked** — recorded so none is silently dropped (24.2 now DONE via D-052) |
 
 **New properties since G3:** P-017…P-020 all owned by task 20.1 (D-049). No Phase-2 property is orphaned.
 
@@ -149,7 +150,7 @@ deep review opened).
 | `D-044` | Implementation (server, traced via task 13.5/17.4) | Sign-in payload projects RBAC onto FUXA's session shape (`groups`/`info`); referenced from `tasks.md` 17.4/18 and exercised live by task 21's matrix (`operator1` → `groups:0`, admin → `groups:-1`) |
 
 **Coverage invariant (machine-checked):** `tools/anti-drift-check.js` fails if any `D-*` heading is absent
-from both `traceability.md` and `tasks.md`. With §D.2 + §D.3 the current coverage is **51/51**.
+from both `traceability.md` and `tasks.md`. With §D.2 + §D.3 the current coverage is **52/52** (D-052 added 2026-07-28, §D.2).
 
 ## E. Orphan and phase-gate check (current)
 

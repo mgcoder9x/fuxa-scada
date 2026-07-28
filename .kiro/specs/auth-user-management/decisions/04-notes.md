@@ -1635,3 +1635,29 @@
 - **Verification (all observed this turn):** client jest **123 passing / 10 suites** (was 102/9: +18 page specs +3 DOM-type regressions); server suite **211 passing** (was 210: +1 bounds assertion); `ng build --configuration production` exit 0; diagnostics 0 on every touched file; 34 new i18n keys added to **all 13 locales** (add-only, each file re-parsed; machine-assisted → native QA flagged as with N-079/N-093). LIVE BROWSER as admin: page renders with nav `Users | Roles | Settings`, hints read **"Allowed: 8–128"** / **"Allowed: 10–15"** (i.e. rendered FROM the server bounds), Save is disabled when clean and enabled when dirty, an out-of-range cost shows **"Enter a value between 10 and 15"** with no request issued, a valid change saves with **"Settings saved and applied."**, and **0 console errors**. END-TO-END HOT-SWAP: after changing the minimum from 12 to 16 in the UI, `GET /api/auth/config` reports 16 and `POST /api/users` with a 13-character password is refused with `detailCode:"password_too_short", detailParams:{min:16}` — proving both the live apply AND that the D-051 message tracks a runtime-changed policy on the real instance. Then the two-step reset in the UI ("Discard all saved overrides…" → Confirm) returned the minimum to 12. As `operator1` (no `settings.read`): the **Settings tab is absent**, `/auth/settings` shows `Unauthorized!` and renders NO form field, 0 console errors.
 - Task/traceability: `tasks.md` 20.2 moves to done; `traceability.md` §D.2's D-049 row updated. Still open from D-049: Phase 3 (task 20.3 — iss/aud/alg with a zero-logout overlap window).
 - Honest limits: the page deliberately does NOT expose `authModuleEnabled` (mount-time, N-071 hazard) or `secretCode` (secret, D-022) — both stay restart/secure-path only, as D-049 decided. The visual design is plain on purpose (the user's UI mockups are still to come). And the 34 new translations are machine-assisted: correct in structure and interpolation, but SCADA wording deserves a native pass.
+
+
+### N-097 — Task 24.2: legacy `/users`+`/userRoles` SUPERSEDE redirect implemented + browser-verified (D-052 / DV-013)
+
+- Date: 2026-07-28. Closes the D-048 residual (direct-URL bypass of the module-owned identity pages).
+- What shipped: new module files `client/src/app/auth-management/guards/legacy-admin-route.ts` (pure rxjs
+  decision `legacyAdminRedirect$`), `legacy-admin-route.spec.ts` (4 jest tests), and
+  `legacy-user-admin-redirect.guard.ts` (thin `@Injectable` shell); FUXA-core `app.routing.ts` wired via
+  DV-013 (guard before `AuthGuard` on the two routes + `data.supersedeRedirect`).
+- Root-cause discipline (why the guard waits on `loaded$`): `authModuleEnabled` is loaded ASYNC and defaults to
+  `false`; a synchronous read on a cold direct-URL load would leak the legacy page under SUPERSEDE — an
+  N-096-class browser-only race. The guard gates on `SettingsService.loaded$` first; the pure helper's RACE
+  spec asserts it does not decide while unloaded and then decides with the authoritative flag. This is the
+  design-first / fix-the-root pattern, and it is exactly the kind of defect the summary's gotchas warn about.
+- Verification (all observed this turn): client jest **127 passing / 11 suites** (was 123/10: +1 suite/+4
+  tests); `ng build --configuration production` exit 0 (guard wired, no "unused" warning); `get_diagnostics`
+  clean on the 3 touched/new files. LIVE BROWSER (Playwright MCP, server :1881, `authModuleEnabled:true`,
+  signed in as `admin`): direct `GET /users` → `/auth/users`; direct `GET /userRoles` → `/auth/roles`; the
+  `/auth/roles` page renders the real role table (`viewer_test` / `user.read`) with full admin affordances;
+  **0 console errors**. Flag-OFF path byte-identical by construction (guard returns `true`) — verified by code
+  (D-048/N-086 basis), not re-toggled live this turn.
+- Task/traceability: `tasks.md` 24.2 → done; `traceability.md` §D.2 gains a D-052 row and §D.3 a
+  decision→realization entry. Remaining Phase-2 items unchanged (24.3 non-admin message, 20.3 D-049 Phase 3,
+  24.1 line-endings [awaits user], 24.4 i18n native, 24.5 Angular/CSP, 24.6 init latency).
+- Honest limit: the redirect is UX/consistency; server §05 is the authority. A user who bypasses the client
+  (raw API) is already covered by server authorization, not by this guard.

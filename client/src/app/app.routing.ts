@@ -29,6 +29,9 @@ import { UserManagementComponent } from './auth-management/user-management/user-
 import { RotatePasswordComponent } from './auth-management/rotate-password/rotate-password.component';
 import { RoleManagementComponent } from './auth-management/role-management/role-management.component';
 import { AuthSettingsComponent } from './auth-management/auth-settings/auth-settings.component';
+// D-052 (task 24.2): under SUPERSEDE, redirect the legacy /users and /userRoles routes to the
+// module-owned pages so a direct URL cannot bypass the module that owns identity (DV-013 wires it).
+import { LegacyUserAdminRedirectGuard } from './auth-management/guards/legacy-user-admin-redirect.guard';
 
 const appRoutes: Routes = [
     { path: '', component: HomeComponent},//, canActivate: [AuthGuard] },
@@ -38,8 +41,11 @@ const appRoutes: Routes = [
     { path: 'lab', component: LabComponent, canActivate: [AuthGuard] },
     { path: 'device', component: DeviceComponent, canActivate: [AuthGuard] },
     { path: DEVICE_READONLY, component: DeviceComponent, canActivate: [AuthGuard] },
-    { path: 'users', component: UsersComponent, canActivate: [AuthGuard] },
-    { path: 'userRoles', component: UsersRolesComponent, canActivate: [AuthGuard] },
+    // D-052/DV-013: LegacyUserAdminRedirectGuard runs BEFORE AuthGuard — under SUPERSEDE it
+    // redirects (UrlTree) to the module page (so neither the legacy page nor FUXA's login dialog
+    // shows); OFF it returns true and AuthGuard runs unchanged (non-flipped = byte-identical).
+    { path: 'users', component: UsersComponent, canActivate: [LegacyUserAdminRedirectGuard, AuthGuard], data: { supersedeRedirect: '/auth/users' } },
+    { path: 'userRoles', component: UsersRolesComponent, canActivate: [LegacyUserAdminRedirectGuard, AuthGuard], data: { supersedeRedirect: '/auth/roles' } },
     { path: 'alarms', component: AlarmViewComponent, canActivate: [AuthGuard] },
     { path: 'messages', component: AlarmListComponent, canActivate: [AuthGuard] },
     { path: 'notifications', component: NotificationListComponent, canActivate: [AuthGuard] },

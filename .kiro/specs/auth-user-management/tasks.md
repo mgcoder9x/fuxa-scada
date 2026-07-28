@@ -418,9 +418,10 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
   - [ ] 24.1 Repository line-ending normalization (N-089)
     - `.gitattributes` with `* text=auto eol=lf` (+ explicit `binary` for images/fonts) as an ISOLATED renormalization commit, so `client/dist` content hashes stop depending on the contributor's machine
     - _AWAITING USER APPROVAL — repo-wide, one-time large diff. Measured evidence: the same font asset is 678,869 B (LF, repo) vs 688,873 B (CRLF, this worktree), so every dist hash shifts per machine and D-038's byte-identity verification is unusable here._
-  - [ ] 24.2 Flag-gated redirect for the legacy `/users` / `/userRoles` routes (D-048 residual)
+- [x] 24.2 Flag-gated redirect for the legacy `/users` / `/userRoles` routes (D-048 residual)
     - Under SUPERSEDE, a direct URL to the built-in pages should redirect to the module pages instead of rendering the superseded UI
     - _Requirements: 12.1_
+    - _DONE 2026-07-28 (D-052 / DV-013 / N-097): module-owned `LegacyUserAdminRedirectGuard` before `AuthGuard` on the two routes; pure rxjs `legacyAdminRedirect$` gates on `SettingsService.loaded$` to avoid the default-false cold-load race (N-096-class). Client jest 127/11 (incl. the race spec), prod build 0. LIVE browser: `/users`→`/auth/users`, `/userRoles`→`/auth/roles`, 0 console errors; flag-OFF path byte-identical by construction._
   - [ ] 24.3 Authorization message instead of the legacy sign-in dialog for a non-admin (D-042 §3.2 residual)
     - A non-admin hitting an admin route gets FUXA's "Sign in..." dialog, which asks for credentials the user already has; the truthful response is "not authorized"
     - _Requirements: 10.2, 11.3_

@@ -154,3 +154,28 @@
 - Rationale (precise): (1) commercial-grade console hygiene — a wrong password or a rate-limit is a normal, user-facing outcome and must NOT appear as a red console error nor flood error-monitoring (Sentry-class) tooling with non-actionable noise; (2) it is the ROOT fix at the exact logging site, not a leaf patch elsewhere; (3) diagnostics for GENUINELY unexpected failures (network/offline `status===0`, 5xx, malformed) are PRESERVED — those still `console.error`; (4) `observer.error` is untouched so behavior/UX is unchanged; (5) user explicitly approved item #2. Alternatives considered: (a) wrap in the module login component instead — rejected: the module component never calls `console.error`; the noise originates in FUXA-core, so patching elsewhere would be a leaf-fix leaving the root; (b) strip the `console.error` entirely — rejected: it would also hide real/unexpected errors needed for diagnostics; (c) leave as-is — rejected: the user asked to fix it and it is sub-commercial to log expected auth failures as console errors.
 - Impact / Risk: a small diff to one FUXA-core file (slightly larger FUXA-upgrade merge surface, the D-003 concern) but purely additive guard logic; the legacy dialog-login path that ALSO calls `signIn` benefits identically. If a future FUXA upgrade rewrites `signIn`, this guard is trivially re-applied or superseded harmlessly.
 - Verification: `get_diagnostics` clean on `auth.service.ts`; `ng build --configuration production` exit 0 (bundle `main.bbfca1206bb951a0.js`); `jest --runInBand` 74/74 (no module regression). In a real browser (Playwright MCP) with security ON: a wrong-password sign-in now produces `window.__cap === []` (the app's `console.error` hook captured NOTHING — the previous `[ERROR] Re` is gone), while the UI still shows `Invalid username or password` and stays on `/auth/login`. The ONLY remaining console entry is Chromium's own network-layer `Failed to load resource: 401 @ /api/signin`, which is emitted by the browser for any non-2xx XHR and is NOT suppressible from application JS (and is not a `console.error`).
+
+
+### DV-013 — In-place FUXA-core edit of `app.routing.ts` to wire the SUPERSEDE redirect guard (enacts D-052)
+
+- Date: 2026-07-28. Status: **Active (CONFIRMED)**.
+- Links: D-052 (the decision), D-048 (the residual this closes), D-003 (adapter-only boundary), DV-011/DV-012
+  (the prior sibling in-place FUXA-core client edits), `client/src/app/app.routing.ts`.
+- Statement (the deviation): I edited `app.routing.ts` in place — added `import { LegacyUserAdminRedirectGuard }`,
+  and changed the two existing route entries to
+  `{ path: 'users', component: UsersComponent, canActivate: [LegacyUserAdminRedirectGuard, AuthGuard], data: { supersedeRedirect: '/auth/users' } }`
+  and the analogous `userRoles` → `/auth/roles`. `app.routing.ts` is FUXA-core; D-003 normally routes edits
+  through adapters, so this is an in-place FUXA-core edit (same class as DV-011/DV-012, and as the earlier
+  additive `auth/*` route block already in this file).
+- Rationale (precise): (1) the SUPERSEDE redirect is fundamentally a ROUTING concern, so the route table is the
+  correct and only place to express "before rendering the legacy component, decide"; there is no adapter seam
+  for Angular route guards. (2) The edit is minimal and additive — it prepends a guard and adds static `data`;
+  it does not remove or reorder routes, and the guard itself lives in the module (`auth-management/guards/`),
+  so the FUXA-core footprint is just the wiring. (3) It is reversible: deleting the guard reference + `data`
+  restores the file exactly. (4) Non-flipped safety: the guard returns `true` when `authModuleEnabled` is off,
+  so `AuthGuard` runs unchanged and the legacy path is byte-identical.
+- Impact / Risk: a small diff to one FUXA-core file (the D-003 upgrade-merge-surface concern). If a future FUXA
+  upgrade rewrites `app.routing.ts`, this wiring is trivially re-applied (three tokens per route). No behavior
+  change for deployments that do not enable the module.
+- Verification: see D-052 — client jest 127/11, prod build exit 0, live browser both redirects + 0 console
+  errors; `get_diagnostics` clean on `app.routing.ts` and the two new guard files.
