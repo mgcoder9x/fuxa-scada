@@ -179,3 +179,28 @@
   change for deployments that do not enable the module.
 - Verification: see D-052 — client jest 127/11, prod build exit 0, live browser both redirects + 0 console
   errors; `get_diagnostics` clean on `app.routing.ts` and the two new guard files.
+
+
+### DV-014 — In-place FUXA-core edit of `auth.guard.ts` for truthful non-admin denial (enacts D-053)
+
+- Date: 2026-07-28. Status: **Active (CONFIRMED)**.
+- Links: D-053 (the decision), D-042 §3.2 (the residual this closes), D-003 (adapter-only boundary),
+  DV-011/DV-012 (prior in-place FUXA-core client edits), `client/src/app/auth.guard.ts`.
+- Statement (the deviation): I edited `auth.guard.ts` in place — in the `secureEnabled === true` branch of
+  `canActivate`, BEFORE `this.dialog.open(LoginComponent)`, I inserted a guard: if
+  `AuthService.getUserProfile()` is a real non-guest session (`username` set, not guest), notify
+  `msg.signin-unauthorized`, `router.navigateByUrl('/')`, and `return of(false)` — skipping the dialog. The
+  pre-existing dialog path (for unauthenticated/guest visitors) and the early `isAdmin()`/`!isSecurityEnabled`
+  returns are untouched. `auth.guard.ts` is FUXA-core and a security control, so this is a carefully-scoped
+  in-place edit (D-003 normally routes edits to adapters; there is no adapter seam for this guard).
+- Rationale (precise): (1) the dishonest UX originates INSIDE the guard's branch logic, so the guard is the
+  only correct place to fix it (a leaf-fix elsewhere could not suppress the dialog the guard itself opens);
+  (2) the change is deny-preserving — it never returns `true` where the old code returned `false`, so it
+  cannot widen access; (3) it is minimal and additive (an early-return guard) and fully reversible by
+  deleting the inserted block; (4) it reuses the existing i18n message, so no locale files change.
+- Impact / Risk: a small diff to one security-sensitive FUXA-core file (the D-003 upgrade-merge-surface
+  concern). Because it is a security control, it was browser-verified across the authenticated-non-admin,
+  unauthenticated, and admin paths (see D-053) rather than trusted to build alone. If a future FUXA upgrade
+  rewrites `canActivate`, the early-return is trivially re-applied.
+- Verification: see D-053 — diagnostics clean, prod build exit 0, three-path live browser matrix + 0 console
+  errors.

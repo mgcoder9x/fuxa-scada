@@ -1661,3 +1661,29 @@
   24.1 line-endings [awaits user], 24.4 i18n native, 24.5 Angular/CSP, 24.6 init latency).
 - Honest limit: the redirect is UX/consistency; server §05 is the authority. A user who bypasses the client
   (raw API) is already covered by server authorization, not by this guard.
+
+
+### N-098 — Task 24.3: truthful non-admin denial in AuthGuard (no useless login dialog) — D-053 / DV-014
+
+- Date: 2026-07-28. Closes the D-042 §3.2 residual: an authenticated non-admin hitting an admin route got
+  FUXA's "Sign in..." dialog (asking for credentials they already hold) instead of a truthful denial.
+- Root cause (not a leaf): `AuthGuard.canActivate`'s `secureEnabled` branch unconditionally opened the login
+  dialog after `isAdmin()===false`. The honest distinction it was missing: **unauthenticated → dialog** vs
+  **authenticated-but-not-admin → "Unauthorized!"** (re-login as the same account can't grant admin). Fixed
+  at that exact site with a deny-preserving early return.
+- Edge cases handled (the reason the predicate is `username`-based, not `token`-based): refresh-cookie flow
+  leaves the access token transiently null on a valid session (a token check would re-prompt wrongly); and
+  guest-mode is mirrored from `AuthService.isGuestUser` so guests still get the dialog. A fully-expired
+  session is already nulled by `AuthService`, so it correctly falls through to the dialog.
+- Verification (all observed this turn, security ON): `get_diagnostics` clean on `auth.guard.ts`;
+  `ng build --configuration production` exit 0. LIVE BROWSER (Playwright MCP): (1) `operator1` (non-admin) →
+  `/editor` → redirected to `/` with **"Unauthorized!"** toast, **NO dialog**; (2) session cleared → `/editor`
+  → FUXA **"Sign in..."** dialog appears; (3) admin creds in that dialog → `/editor` renders the full editor.
+  **0 console errors**. Server suite not affected (client-only edit); not re-run.
+- Task/traceability: `tasks.md` 24.3 → done; `traceability.md` §D.2 gains a D-053 row (coverage 53/53).
+  Remaining Phase-2: 20.3 (D-049 Phase 3), 24.1 (line-endings, awaits user), 24.4 (i18n native), 24.5
+  (Angular/CSP), 24.6 (init latency).
+- Honest limit: reused the terse existing "Unauthorized!" message rather than a dedicated "signed-in but not
+  permitted" string (would add 13-locale machine-translation debt, 24.4). UX-only fix; server §05 remains the
+  authority. Only `/editor` was exercised live as the representative admin route; the guard is shared, so the
+  behaviour is identical across all AuthGuard routes by construction.

@@ -886,3 +886,44 @@
   `/auth/roles` page renders the real role table (`viewer_test` → `user.read`) with admin affordances, **0
   console errors**. The flag-OFF path is byte-identical by construction (guard returns `true`, AuthGuard
   unchanged) — verified by code, same basis as D-048/N-086.
+
+
+### D-053 — Truthful denial for authenticated non-admins in `AuthGuard` (no useless login dialog)
+
+- Date: 2026-07-28. Status: **Active (CONFIRMED)** — implemented + browser-verified this turn (task 24.3).
+- Context: FUXA's shared `AuthGuard` (client/src/app/auth.guard.ts, ~15 admin routes) does, when security is
+  on and `isAdmin()` is false: **always open the legacy login dialog**, then on close notify
+  `msg.signin-unauthorized` ("Unauthorized!") and redirect `/`. For a user who is ALREADY signed in but is
+  simply not an admin (the normal case under the module SUPERSEDE — e.g. an operator with `user.read`), the
+  dialog asks for credentials they already have and signing in again as the same account cannot grant admin —
+  a dishonest, confusing UX (D-042 §3.2 residual).
+- Decision: before opening the dialog in the `secureEnabled` branch, detect an already-authenticated REAL
+  (non-guest) session; if present, skip the dialog and go straight to the truthful "Unauthorized!" +
+  redirect. Only an unauthenticated (or guest) visitor still gets the login dialog.
+- Predicate (root-correct, edge cases handled): `authenticatedRealUser = !!profile && !!profile.username &&
+  !isGuest`, where `profile = AuthService.getUserProfile()` and `isGuest` MIRRORS `AuthService.isGuestUser`
+  (`username === 'guest'` OR `groups` array includes `'guest'`). Reasons: (a) uses `username`, NOT `token`,
+  because under the refresh-cookie flow the access token is transiently null while the session is valid —
+  a token check would wrongly re-prompt; (b) mirrors FUXA's own guest definition so guest-mode deployments
+  are unaffected (guests still get the dialog to sign in); (c) a fully-expired session is already cleared to
+  `currentUser=null` by `AuthService` (constructor / refresh-error `removeUser`), so `getUserProfile()` is
+  null ⇒ dialog — correct.
+- Deny-preserving (why this is a UX change, not a security change): the branch already returned `false` for
+  non-admins; this only changes WHICH denial UX shows (immediate message vs dialog-then-message). It NEVER
+  grants access it did not grant before, and the successful-login-through-dialog path (unauthenticated →
+  dialog → admin creds → allow) is untouched. Server-side authorization is unaffected.
+- Message: reuses the EXISTING `msg.signin-unauthorized` = "Unauthorized!" (the exact message the flow already
+  showed after the dialog), so ZERO new i18n keys / no 13-locale churn.
+- Alternatives considered: (i) **add a distinct "you are signed in but lack permission" key** — deferred:
+  correct but adds 13-locale machine-translation debt (24.4) for marginal gain over the existing honest
+  "Unauthorized!"; revisit with the native i18n pass; (ii) **redirect silently with no message** — rejected:
+  a silent redirect from a deep link is itself confusing; (iii) **check `getUserToken()` instead of
+  username** — rejected: the refresh-cookie transient-null token would misclassify a valid session as
+  unauthenticated; (iv) **route non-admins to the module `/auth/login`** — rejected: they are already
+  authenticated, re-login is the very thing to avoid.
+- Boundary: in-place FUXA-core edit of `auth.guard.ts`, logged as **DV-014** (same class as DV-011/DV-012).
+- Verification: `get_diagnostics` clean; `ng build --configuration production` exit 0. LIVE BROWSER
+  (Playwright MCP, security ON): (1) signed in as `operator1` (non-admin) → `GET /editor` lands on `/` with
+  a **"Unauthorized!"** toast and **NO login dialog**; (2) session cleared → `GET /editor` still opens FUXA's
+  **"Sign in..."** dialog; (3) admin credentials in that dialog → `/editor` renders the full editor. **0
+  console errors** across all three.

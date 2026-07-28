@@ -40,6 +40,25 @@ export class AuthGuard  {
                 if (!secureEnabled) {
                     return of(true);
                 } else {
+                    // 24.3 (D-053/DV-014): if the user is ALREADY signed in as a real (non-guest)
+                    // account but simply isn't an admin, re-opening the login dialog is dishonest —
+                    // signing in again as the same account cannot grant admin, so it asks for
+                    // credentials they already have. Tell the truth ("Unauthorized!") and don't
+                    // prompt. Only an unauthenticated (or guest) visitor still gets the login dialog.
+                    // Deny-preserving: this branch already returned false for non-admins; it only
+                    // changes WHICH denial UX shows, never the access decision. Guest is mirrored
+                    // from AuthService.isGuestUser (username 'guest' OR groups includes 'guest') so a
+                    // guest-mode visitor is unaffected; username is used (not token) to stay correct
+                    // under the refresh-cookie flow where the access token is transiently null.
+                    const profile = this.authService.getUserProfile();
+                    const isGuest = !!profile && (profile.username === 'guest' ||
+                        (Array.isArray(profile.groups) && (profile.groups as any).includes('guest')));
+                    const authenticatedRealUser = !!profile && !!profile.username && !isGuest;
+                    if (authenticatedRealUser) {
+                        this.notifySaveError('msg.signin-unauthorized');
+                        this.router.navigateByUrl('/');
+                        return of(false);
+                    }
                     const dialogRef = this.dialog.open(LoginComponent);
                     return dialogRef.afterClosed().pipe(
                         mergeMap(result => {

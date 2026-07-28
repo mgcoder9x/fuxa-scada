@@ -422,9 +422,10 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - Under SUPERSEDE, a direct URL to the built-in pages should redirect to the module pages instead of rendering the superseded UI
     - _Requirements: 12.1_
     - _DONE 2026-07-28 (D-052 / DV-013 / N-097): module-owned `LegacyUserAdminRedirectGuard` before `AuthGuard` on the two routes; pure rxjs `legacyAdminRedirect$` gates on `SettingsService.loaded$` to avoid the default-false cold-load race (N-096-class). Client jest 127/11 (incl. the race spec), prod build 0. LIVE browser: `/users`→`/auth/users`, `/userRoles`→`/auth/roles`, 0 console errors; flag-OFF path byte-identical by construction._
-  - [ ] 24.3 Authorization message instead of the legacy sign-in dialog for a non-admin (D-042 §3.2 residual)
+- [x] 24.3 Authorization message instead of the legacy sign-in dialog for a non-admin (D-042 §3.2 residual)
     - A non-admin hitting an admin route gets FUXA's "Sign in..." dialog, which asks for credentials the user already has; the truthful response is "not authorized"
     - _Requirements: 10.2, 11.3_
+    - _DONE 2026-07-28 (D-053 / DV-014 / N-098): in-place FUXA-core `auth.guard.ts` early-return — an already-authenticated real (non-guest) non-admin gets "Unauthorized!" + redirect with NO dialog; unauthenticated/guest still get the dialog. Deny-preserving (UX-only), reuses `msg.signin-unauthorized` (0 i18n churn). Verified live 3-path (non-admin/unauth/admin) + 0 console errors._
   - [ ] 24.4 Native review of the machine-assisted translations
     - The ~44 keys from N-079 and the 4 keys from D-051 were machine-translated across 12 locales; SCADA terminology needs a native pass
   - [ ] 24.5 Angular major upgrade (framework XSS advisories) + a real CSP
