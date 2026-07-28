@@ -18,12 +18,12 @@ node .kiro/specs/auth-user-management/tools/anti-drift-check.js   # PHẢI exit 
 
 ## 1. TRẠNG THÁI (đã kiểm chứng)
 
-- HEAD: `2c890e4` trên `auth-user-management-spec`, push cả 2 remote (`origin` **và** `orgin`, cùng URL
+- HEAD: `3eeb72b` trên `auth-user-management-spec`, push cả 2 remote (`origin` **và** `orgin`, cùng URL
   `https://github.com/mgcoder9x/fuxa-scada.git`).
-- **High-water: D→051, DV→012, TO→016, N→096, P→020.** ID mới phải > các số này, không tái dùng.
-- Test: **server 211 passing**, **client jest 123 passing / 10 suites**, `ng build --configuration production` exit 0.
+- **High-water: D→054, DV→014, TO→016, N→101, P→020.** ID mới phải > các số này, không tái dùng.
+- Test: **server 216 passing**, **client jest 136 passing / 11 suites**, `ng build --configuration production` exit 0.
 - Module auth **đang LIVE** trên instance thật (stage-4 flip, N-074). 5 trụ cột xong; Task 1–18 xong;
-  Phase 2 (task 19–24 trong `tasks.md`) đang chạy.
+  Phase 2: **24.2 + 24.3 + 20.3 xong** (2026-07-28); còn 24.1/24.4/24.5/24.6 (xem §5).
 
 ## 2. LỆNH BẮT BUỘC (sai là mất thời gian)
 
@@ -49,31 +49,34 @@ cd server && node main.js                  # listen sau ~12–60s (init dao đ�
   Nếu cần đặt lại mật khẩu: ghi bcrypt cost-12 verbatim vào cột `password`, giữ `mustRotate:false`,
   bump `tokenVersion`. **KHÔNG đặt `123456`** — bootstrap sẽ force-rotate lại (xem `_remediateKnownDefaultAdmins`).
 
-## 4. VỪA LÀM XONG (đọc N-089…N-096 nếu cần chi tiết)
+## 4. VỪA LÀM XONG (2026-07-28 — đọc N-097…N-101 nếu cần chi tiết)
 
-- **D-050** (N-092): `GET /api/auth/permissions` (gate chỉ cần đã-đăng-nhập) → client resolve quyền từ
-  server; **xoá nhánh deadlock** `roleDefs.size===0→false`. Fix N-091 L1 + L3. Single-source
-  `ADMIN_PERMISSION_SET` (model sở hữu, service import).
-- **D-051** (N-093): mã lỗi máy-đọc-được `detailCode`/`detailParams` (message giữ nguyên byte) → UI hiện
-  "Password must be at least 12 characters"; + ẩn nút Add/Edit/Remove theo quyền thật.
-- **N-094/N-095**: `tasks.md` Phase 2 + traceability §D.2/§D.3 (D-* coverage **51/51**, không allowlist) +
-  **trình kiểm tra chống drift máy móc** + hook `fileEdited → runCommand`.
-- **D-049 Phase 2** (N-096): trang `/auth/settings` (runtime config: password policy, bcrypt cost, TTL,
-  brute-force). Server phát kèm `bounds` để client **không copy tay** ngưỡng. Vòng hot-swap đã verify
-  live: UI 12→16 ⇒ server chặn mật khẩu 13 ký tự ⇒ reset 2 bước → 12.
+- **24.2 / D-052 / DV-013 / N-097**: dưới SUPERSEDE, URL trực tiếp `/users`→`/auth/users`,
+  `/userRoles`→`/auth/roles` (guard `LegacyUserAdminRedirectGuard` chạy TRƯỚC `AuthGuard`; chờ
+  `SettingsService.loaded$` để tránh race cờ default-false N-096-class). Cờ OFF = byte-identical.
+- **24.3 / D-053 / DV-014 / N-098**: `AuthGuard` — non-admin ĐÃ đăng nhập (non-guest) vào route admin
+  nhận "Unauthorized!" ngay, KHÔNG mở dialog login; chưa-đăng-nhập/guest vẫn có dialog; admin không đổi.
+  Deny-preserving (chỉ đổi UI từ chối), reuse `msg.signin-unauthorized` (0 churn i18n).
+- **20.3 / D-054 Option B / N-099-101**: runtime `jwtIssuer`/`jwtAudience`/`jwtAlgorithm` ở
+  `/auth/settings` (mục "Advanced — Token signing"). N-099 (kiểm chứng jsonwebtoken thật): overlap-window
+  §12 phải hand-roll iss/aud trong `verify` cho ca unset→set ⇒ user chọn **Option B**: `verify` GIỮ
+  strict + thư viện enforce; đổi iss/aud/alg = sự kiện CÓ XÁC NHẬN, kết thúc mọi phiên (token cũ fail
+  verify ⇒ re-login). alg HS-only (secretCode là shared secret). e2e live đã verify + Reset về HS256.
+- **⚠️ GOTCHA (N-101)**: sửa code SERVER phải RESTART `node main.js` mới có hiệu lực (module cache trong
+  RAM) — lần save đầu bị `400 unknown field` vì service cũ còn trong bộ nhớ. Client static tự cập nhật từ disk.
 
-## 5. CÒN LẠI (xếp theo giá trị — chi tiết ở `tasks.md` task 24 + 20.3)
+> Trước đó (2026-07-27, N-092…N-096): D-050 permissions server-authoritative, D-051 rejection codes +
+> affordances, N-094/095 anti-drift layer 6, D-049 Phase 2 `/auth/settings`.
 
-1. **24.2** — SUPERSEDE: URL trực tiếp `/users`/`/userRoles` vẫn render trang FUXA cũ → cần redirect gated.
-2. **24.3** — non-admin vào route admin bị mở dialog "Sign in..." của FUXA thay vì báo không đủ quyền.
-3. **20.3** — D-049 Phase 3: `jwtIssuer`/`jwtAudience` (cửa sổ không-logout) + `jwtAlgorithm` (re-login).
-4. **24.1** — `.gitassignments`/line-ending: thêm `.gitattributes` `* text=auto eol=lf`. **CHỜ USER DUYỆT**
+## 5. CÒN LẠI (xếp theo giá trị — chi tiết ở `tasks.md` task 24)
+
+1. **24.1** — `.gitattributes` `* text=auto eol=lf` + `binary` cho ảnh/font. **CHỜ USER DUYỆT**
    (commit renormalize diện rộng). Đo được: cùng 1 font = 678.869 B (LF, repo) vs 688.873 B (CRLF, máy cũ)
    ⇒ mọi hash `client/dist` đổi theo máy (N-089).
-5. **24.4** — i18n: ~44 + 4 + 34 key là **máy dịch**, cần người bản ngữ soát (13 locale).
-6. **24.5** — nâng Angular (XSS framework) + CSP thật. Đã có bằng chứng defer: FUXA không dùng SSR nên ~3
+2. **24.4** — i18n: ~44 + 4 + 34 + 9 key là **máy dịch**, cần người bản ngữ soát (13 locale).
+3. **24.5** — nâng Angular (XSS framework) + CSP thật. Đã có bằng chứng defer: FUXA không dùng SSR nên ~3
    advisory N/A (N-079); CSP thật đòi bỏ inline script + `eval` của tính năng script (N-080).
-7. **24.6** — init boot dao động 12–62s, chưa root-cause, không chặn.
+4. **24.6** — init boot dao động 12–62s, chưa root-cause, không chặn (nhưng làm chậm mỗi lần restart+test).
 
 ## 6. GOTCHA (đã trả giá rồi)
 
@@ -81,8 +84,10 @@ cd server && node main.js                  # listen sau ~12–60s (init dao đ�
   N-096 vừa bắt `[(ngModel)]` trên `type="number"` trả **number** làm `.trim()` nổ mỗi vòng change-detection.
 - `client/dist` **được git track** → phải rebuild production trước khi commit thay đổi client.
 - Restart server khi tab đang mở → flood `ERR_CONNECTION_REFUSED` trong console: **artifact, không phải bug**.
+- **Sửa code SERVER phải RESTART `node main.js`** (module cache RAM) mới có hiệu lực — client static thì tự
+  cập nhật từ disk. Bỏ qua sẽ thấy hành vi server CŨ dù file đã đúng (N-101, mất thời gian thật).
 - FUXA-core chỉ sửa qua adapter + 1 dòng mount (D-003); mọi sửa in-place phải log là `DV-*`
-  (đang có DV-011 `home.component.ts`, DV-012 `auth.service.ts`).
+  (đang có DV-011 `home.component.ts`, DV-012 `auth.service.ts`, DV-013 `app.routing.ts`, DV-014 `auth.guard.ts`).
 - Ledger **append-only**: không sửa/xoá entry cũ, không tái dùng ID, `TO-003` bị quarantine.
 
 ## 7. FILE QUAN TRỌNG
