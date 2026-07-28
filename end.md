@@ -18,12 +18,13 @@ node .kiro/specs/auth-user-management/tools/anti-drift-check.js   # PHẢI exit 
 
 ## 1. TRẠNG THÁI (đã kiểm chứng)
 
-- HEAD: `3eeb72b` trên `auth-user-management-spec`, push cả 2 remote (`origin` **và** `orgin`, cùng URL
+- HEAD: `a2b529a` trên `auth-user-management-spec`, push cả 2 remote (`origin` **và** `orgin`, cùng URL
   `https://github.com/mgcoder9x/fuxa-scada.git`).
-- **High-water: D→054, DV→014, TO→016, N→101, P→020.** ID mới phải > các số này, không tái dùng.
+- **High-water: D→054, DV→014, TO→016, N→103, P→020.** ID mới phải > các số này, không tái dùng.
 - Test: **server 216 passing**, **client jest 136 passing / 11 suites**, `ng build --configuration production` exit 0.
+- **Boot server ~2.8s** (trước ~63s; N-102 fix). `.gitattributes` đã có (N-103) — LF nhất quán mọi máy.
 - Module auth **đang LIVE** trên instance thật (stage-4 flip, N-074). 5 trụ cột xong; Task 1–18 xong;
-  Phase 2: **24.2 + 24.3 + 20.3 xong** (2026-07-28); còn 24.1/24.4/24.5/24.6 (xem §5).
+  Phase 2: **20.3 + 24.1 + 24.2 + 24.3 + 24.6 xong** (2026-07-28); **chỉ còn 24.4 + 24.5** (xem §5, cả 2 cần input ngoài).
 
 ## 2. LỆNH BẮT BUỘC (sai là mất thời gian)
 
@@ -70,13 +71,15 @@ cd server && node main.js                  # listen sau ~12–60s (init dao đ�
 
 ## 5. CÒN LẠI (xếp theo giá trị — chi tiết ở `tasks.md` task 24)
 
-1. **24.1** — `.gitattributes` `* text=auto eol=lf` + `binary` cho ảnh/font. **CHỜ USER DUYỆT**
-   (commit renormalize diện rộng). Đo được: cùng 1 font = 678.869 B (LF, repo) vs 688.873 B (CRLF, máy cũ)
-   ⇒ mọi hash `client/dist` đổi theo máy (N-089).
-2. **24.4** — i18n: ~44 + 4 + 34 + 9 key là **máy dịch**, cần người bản ngữ soát (13 locale).
-3. **24.5** — nâng Angular (XSS framework) + CSP thật. Đã có bằng chứng defer: FUXA không dùng SSR nên ~3
-   advisory N/A (N-079); CSP thật đòi bỏ inline script + `eval` của tính năng script (N-080).
-4. **24.6** — init boot dao động 12–62s, chưa root-cause, không chặn (nhưng làm chậm mỗi lần restart+test).
+1. **24.4** — i18n: ~91 key là **máy dịch** (13 locale) → cần **người bản ngữ** soát. Tôi chỉ thêm bản máy +
+   gắn cờ; không tự "hoàn thành" được. Có thể soạn "review packet" (key + bản gốc EN + bản dịch từng locale).
+2. **24.5** — nâng Angular (XSS framework) + CSP thật. **Lớn**, đã có bằng chứng defer: FUXA không dùng SSR nên
+   ~3 advisory N/A (N-079); CSP thật đòi bỏ inline script + `eval` của tính năng script (N-080). Cần pass thiết
+   kế riêng + go-ahead (rủi ro hồi quy framework).
+
+> Đã xong 2026-07-28: 24.1 (`.gitattributes`, N-103) · 24.6 (boot 63.6s→2.8s, N-102) · 24.2 (D-052) · 24.3
+> (D-053) · 20.3 (D-054 Option B). Module IAM **feature-complete** cho phạm vi thương mại lõi; còn lại chỉ
+> hardening/hygiene cần input ngoài.
 
 ## 6. GOTCHA (đã trả giá rồi)
 
