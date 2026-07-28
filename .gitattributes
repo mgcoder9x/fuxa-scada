@@ -1,0 +1,31 @@
+# Line-ending policy (task 24.1 / N-089).
+#
+# WHY: binary assets that were NOT marked binary (fonts especially) were being run
+# through git's CRLF<->LF conversion, which injects/strips CR bytes and CHANGES the
+# stored bytes per contributor OS — e.g. the same font measured 678,869 B (LF) vs
+# 688,873 B (CRLF). Because client/dist is committed, every build artifact hash then
+# shifted by machine, making D-038's byte-identity check unusable across machines.
+#
+# FIX (root, not leaf): normalize every TEXT file to LF in the repo AND in the working
+# tree, and mark every known BINARY type explicitly so git never touches its bytes.
+
+# Default: treat everything as text, auto-detect, store + check out as LF.
+* text=auto eol=lf
+
+# --- Binary assets: never apply any line-ending conversion ---
+*.png   binary
+*.gif   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.icns  binary
+*.eot   binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.pdf   binary
+*.zip   binary
+
+# --- Explicit text (clarity; all already covered by the default) ---
+*.sh    text eol=lf
