@@ -86,6 +86,17 @@ Adds one property refinement: **P-017a** — after an `iss`/`aud` change, a toke
 value still verifies until the transition window elapses, and a token signed under the NEW value
 verifies immediately; after the window, OLD-signed tokens no longer verify.
 
+> **Validation 2026-07-28 (N-099 / D-054) — this §12 recommendation is under review.** Reading the
+> installed `jsonwebtoken/verify.js` proved the overlap window is library-expressible ONLY for a
+> SET→SET change (`issuer:[old,new]`/`audience:[old,new]`). For UNSET→SET — the FIRST time iss/aud is
+> configured, the primary case — jsonwebtoken REJECTS any token lacking the claim, so zero-logout there
+> forces `verify` to abandon the library's iss/aud check and hand-roll an accept-set inside the security
+> kernel. D-054 therefore RECOMMENDS **Option B** (expose iss/aud/alg as confirmed, session-ending
+> changes; keep `verify` strict + library-enforced) over this overlap window (Option A), with Option C
+> (defer iss/aud/alg to restart-only, like `secretCode`) as the conservative fallback. Also verified:
+> the shared-secret (`secretCode`) path supports HMAC only, so a runtime `jwtAlgorithm` is limited to
+> `HS256/384/512`. Awaiting the user's A/B/C choice before any `verify` change.
+
 ---
 
 ## 3. Architecture (Hướng B — module-owned, near-zero FUXA-core)

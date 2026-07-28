@@ -927,3 +927,58 @@
   a **"Unauthorized!"** toast and **NO login dialog**; (2) session cleared → `GET /editor` still opens FUXA's
   **"Sign in..."** dialog; (3) admin credentials in that dialog → `/editor` renders the full editor. **0
   console errors** across all three.
+
+
+### D-054 — Runtime iss/aud/alg (task 20.3): design-validation + approach fork (PROPOSED — pending user choice)
+
+- Date: 2026-07-28. Status: **Active (CONFIRMED) — Option B chosen by the user 2026-07-28; SERVER implemented +
+  tested; client UI pending** (N-100). Owner area: D-049 Phase 3 / design/13 §12 / task 20.3.
+- Context: Phase 2 (D-049, N-096) shipped the zero-side-effect runtime config (password policy, bcrypt cost,
+  token TTLs, brute-force). Phase 3 (20.3) is the "careful" trio `jwtIssuer`/`jwtAudience`/`jwtAlgorithm`.
+  design/13 §12 RECOMMENDED a zero-logout OVERLAP WINDOW for iss/aud and confirmed re-login for alg, and §11.3
+  explicitly left "build the overlap window now vs defer" as an open user decision.
+- Design-validation finding (N-099, verified against the installed jsonwebtoken, NOT assumed): the overlap
+  window is expressible via the library (`issuer:[old,new]`/`audience:[old,new]`) ONLY for a SET→SET change.
+  For UNSET→SET — the FIRST time iss/aud is ever configured, i.e. the primary case — jsonwebtoken REJECTS any
+  token lacking the claim, so zero-logout there forces `verify` to abandon the library's iss/aud enforcement and
+  hand-roll an accept-set check inside the security kernel. That materially raises the risk profile of the most
+  critical function for a field changed ~once in a deployment's life. §12 under-stated this ("accept a small set
+  instead of a scalar").
+- Options:
+  - **Option A — build the §12 overlap window (zero forced logout).** verify() stops passing issuer/audience to
+    jsonwebtoken and manually validates iss/aud against {new} ∪ {old-until-windowExpiry} ∪ {absent-until-window},
+    with the old value + expiresAt persisted in `auth_config`, dropped lazily after the window (= max access
+    TTL). Pro: nobody is logged out on an iss/aud change. Con: hand-rolls claim validation in the security
+    kernel; a bounded window during which a no-iss/aud token is accepted; real complexity + test burden for a
+    rare operation. (This is design/13 §12's current recommendation — which N-099 now argues against.)
+  - **Option B — RECOMMENDED (military-grade): expose iss/aud/alg at runtime as CONFIRMED, session-ending
+    changes; keep verify strict + library-enforced.** verify() keeps using jsonwebtoken's issuer/audience
+    options (provably strict, zero hand-rolled claim logic). The `/auth/settings` "Advanced — Token signing"
+    section shows an explicit confirm ("this signs out all active users"); on apply, existing tokens fail verify
+    ⇒ clean 401 ⇒ the honest re-login UX (now correct after D-053). Pro: the security kernel stays minimal and
+    provable — the right trade for a rarely-changed hardening field; delivers runtime configurability. Con: a
+    one-time mass re-login on change (communicated, not a brick). alg limited to HS256/384/512 (N-099).
+  - **Option C — defer iss/aud/alg entirely (keep them settings.js + restart-only, like `secretCode`).** The
+    runtime page ships only the zero-side-effect policy (already done in Phase 2). Pro: smallest attack surface,
+    verify untouched, consistent with D-049's own carve-out of `secretCode`/`authModuleEnabled` as secure-/
+    restart-only security-critical config. Con: iss/aud/alg require an engineer + restart (acceptable — set-once).
+- Recommendation: **Option B.** It satisfies the runtime-config requirement while keeping the verify kernel
+  strict and library-enforced (no hand-rolled claim validation), and treats a rare, security-critical change as
+  an explicit confirmed event. Option C is the acceptable conservative fallback; Option A is NOT recommended
+  because N-099 shows it complicates the kernel for marginal convenience.
+- No code changed by this decision. On the user's choice: B ⇒ add the confirm-gated iss/aud/alg fields to the
+  auth-config validate/apply + page (alg set HS-only) with strict verify unchanged; C ⇒ document iss/aud/alg as
+  restart-only and close 20.3 as "deferred by design"; A ⇒ implement §12 with the manual accept-set + P-017a and
+  a heavy verify test matrix.
+- Traceability: §D.3 row added; supersedes design/13 §12's recommendation pending the choice (a "Validation
+  2026-07-28" note appended to §12, not a rewrite).
+- **Resolution (2026-07-28, N-100): Option B chosen.** SERVER done + tested: `AuthConfigService` now
+  validates + applies `jwtIssuer`/`jwtAudience` (null or a bounded non-empty string) and `jwtAlgorithm`
+  (HS256/384/512 only, N-099); `_applyToServices` maps the config key `jwtAlgorithm` → `TokenService`'s
+  `algorithm` and pushes iss/aud live; `TokenService.verify` is UNCHANGED (stays strict + library-enforced —
+  a change makes already-issued tokens fail verify ⇒ clean 401 ⇒ re-login, the confirmed session-ending
+  event). `GET /api/auth/config` now serves `bounds.jwtAlgorithms` + `bounds.jwtClaimMaxLen` so the client
+  renders the choices from the server (N-091 L3 discipline). Verified: server suite **216 passing** (+5:
+  bounds-carry-HS-only, valid iss/aud/alg round-trip, null-unset, RS256 rejected, empty-issuer rejected).
+  **Still pending: the client "Advanced — Token signing" UI section + its confirm-before-apply dialog +
+  i18n + presenter specs + browser e2e.**

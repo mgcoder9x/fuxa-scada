@@ -149,9 +149,10 @@ deep review opened).
 | `D-038` | Build/verify convention | "The canonical client build is `ng build --configuration production`" — a process rule enforced by every client task's verification step (cited throughout `tasks.md`), not by product code |
 | `D-042` | Approach choice (superseded by execution) | The Option-1-vs-2 cutover choice; the chosen Option 2 is realized by task 17.4 (module login via FUXA `AuthService.signIn`) and later completed by D-044 |
 | `D-044` | Implementation (server, traced via task 13.5/17.4) | Sign-in payload projects RBAC onto FUXA's session shape (`groups`/`info`); referenced from `tasks.md` 17.4/18 and exercised live by task 21's matrix (`operator1` → `groups:0`, admin → `groups:-1`) |
+| `D-054` | **Active — Option B chosen (task 20.3, D-049 Phase 3, iss/aud/alg)** | SERVER done + tested: `AuthConfigService` validate/apply/bounds for iss/aud/alg (HS-only, N-099), `verify` UNCHANGED (strict; change ⇒ re-login). `api.auth-config.test.js` +5 (bounds HS-only, iss/aud/alg round-trip, null-unset, RS256 & empty-issuer rejected); server suite 216. design/13 §12 "Validation 2026-07-28" + N-099/N-100. **Client "Advanced — Token signing" UI + confirm dialog + i18n + specs + browser = PENDING** |
 
 **Coverage invariant (machine-checked):** `tools/anti-drift-check.js` fails if any `D-*` heading is absent
-from both `traceability.md` and `tasks.md`. With §D.2 + §D.3 the current coverage is **53/53** (D-052/D-053 added 2026-07-28, §D.2).
+from both `traceability.md` and `tasks.md`. With §D.2 + §D.3 the current coverage is **54/54** (D-052/D-053 §D.2, D-054 §D.3 — added 2026-07-28).
 
 ## E. Orphan and phase-gate check (current)
 

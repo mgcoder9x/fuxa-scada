@@ -113,6 +113,20 @@ describe('GET /api/auth/config (settings.read gate — P-020)', function () {
         // sanity: the bounds are the real policy, not placeholders
         assert.equal(r.body.bounds.bcryptCost.min >= 10, true, 'bcrypt floor must not drop below FUXA baseline (D-008)');
     });
+
+    /**
+     * D-054 Option B (task 20.3): the bounds also carry the HS-only algorithm choices + the iss/aud
+     * length limit, so the "Advanced — Token signing" section renders the options FROM the server
+     * (never a hand-copied list, N-091 L3). Asserts equality with the real ALLOWED_ALGORITHMS.
+     */
+    it('200 bounds carry the HS-only jwtAlgorithms + iss/aud length (D-054)', async function () {
+        const { ALLOWED_ALGORITHMS, BOUNDS } = require('../../auth-management/services/auth-config.service');
+        const r = await call('GET', '/api/auth/config', { token: token('admin', -1) });
+        assert.deepEqual(r.body.bounds.jwtAlgorithms, ALLOWED_ALGORITHMS.slice());
+        assert.equal(r.body.bounds.jwtClaimMaxLen, BOUNDS.jwtClaimMaxLen);
+        // HS-only (no asymmetric alg leaks into the runtime-choosable set, N-099)
+        assert.equal(r.body.bounds.jwtAlgorithms.every((a) => a.startsWith('HS')), true);
+    });
 });
 
 describe('PUT /api/auth/config (settings.manage gate + validate/persist — P-018/P-020)', function () {
@@ -138,5 +152,32 @@ describe('PUT /api/auth/config (settings.manage gate + validate/persist — P-01
         const del = await call('DELETE', '/api/auth/config', { token: token('admin', -1) });
         assert.equal(del.status, 200);
         assert.equal(del.body.data.passwordMinLength, 12);
+    });
+
+    // --- D-054 Option B: token-signing trio (iss/aud/alg) over HTTP ---
+    it('200 accepts a valid iss/aud/alg patch and round-trips via GET (D-054)', async function () {
+        const put = await call('PUT', '/api/auth/config', { token: token('admin', -1), body: { jwtIssuer: 'fuxa', jwtAudience: 'scada', jwtAlgorithm: 'HS384' } });
+        assert.equal(put.status, 200);
+        assert.equal(put.body.data.jwtIssuer, 'fuxa');
+        assert.equal(put.body.data.jwtAudience, 'scada');
+        assert.equal(put.body.data.jwtAlgorithm, 'HS384');
+        const get = await call('GET', '/api/auth/config', { token: token('admin', -1) });
+        assert.equal(get.body.data.jwtIssuer, 'fuxa');
+        assert.equal(get.body.data.jwtAlgorithm, 'HS384');
+    });
+    it('200 null iss/aud clears the claim (D-054/D-029 unset)', async function () {
+        const put = await call('PUT', '/api/auth/config', { token: token('admin', -1), body: { jwtIssuer: null, jwtAudience: null } });
+        assert.equal(put.status, 200);
+        assert.equal(put.body.data.jwtIssuer, null);
+        assert.equal(put.body.data.jwtAudience, null);
+    });
+    it('400 rejects an algorithm outside the HS-only set (N-099)', async function () {
+        const r = await call('PUT', '/api/auth/config', { token: token('admin', -1), body: { jwtAlgorithm: 'RS256' } });
+        assert.equal(r.status, 400);
+        assert.equal(r.body.error, 'validation_error');
+    });
+    it('400 rejects an empty-string issuer (use null to unset)', async function () {
+        const r = await call('PUT', '/api/auth/config', { token: token('admin', -1), body: { jwtIssuer: '   ' } });
+        assert.equal(r.status, 400);
     });
 });

@@ -40,7 +40,20 @@ const CONFIG_DEFAULTS = Object.freeze({
     tokenExpiresIn: '1h',
     refreshTokenExpiresIn: '7d',
     bcryptCost: 12, // D-008
+    // Token-signing "Advanced" trio (D-054 Option B, task 20.3). iss/aud unset by default (null =
+    // neither issued nor validated, D-029); algorithm default HS256 (matches TokenService default).
+    jwtIssuer: null,
+    jwtAudience: null,
+    jwtAlgorithm: 'HS256',
 });
+
+/**
+ * Runtime-allowed JWT algorithms (D-054/N-099). HS-only: the module signs/verifies with FUXA's shared
+ * `secretCode` (a symmetric secret), and jsonwebtoken requires an asymmetric key for the RS/PS/ES
+ * families — which FUXA's jwt path does not provide — so exposing those at runtime would only produce
+ * un-signable configs.
+ */
+const ALLOWED_ALGORITHMS = Object.freeze(['HS256', 'HS384', 'HS512']);
 
 /** Validation bounds (design/13 §5). */
 const BOUNDS = Object.freeze({
@@ -48,6 +61,10 @@ const BOUNDS = Object.freeze({
     bcryptCost: { min: 10, max: 15 }, // >= FUXA's 10 (D-008); capped to avoid a login-CPU DoS
     blocklistMaxEntries: 5000,
     blocklistMaxEntryLen: 256,
+    // D-054 Option B: served so the client renders the algorithm choices + the iss/aud length limit
+    // from the SERVER, never a hand-copied list (the N-091 L3 lesson).
+    jwtAlgorithms: ALLOWED_ALGORITHMS.slice(),
+    jwtClaimMaxLen: 256,
 });
 
 // Duration = a positive number of seconds, or an `ms`-style string ('1h','7d','60','30 minutes').
@@ -72,6 +89,18 @@ function isValidDuration(v) {
     return false;
 }
 
+/**
+ * Is `v` a valid iss/aud value: explicit `null` (unset), or a non-empty string within the length bound?
+ * (D-054 Option B.) Empty/whitespace-only strings are rejected — an empty issuer is a misconfiguration,
+ * not "unset" (use null to unset).
+ * @param {any} v
+ * @returns {boolean}
+ */
+function isValidClaimOrNull(v) {
+    if (v === null) return true;
+    return typeof v === 'string' && v.trim() !== '' && v.length <= BOUNDS.jwtClaimMaxLen;
+}
+
 /** Deep-ish merge for the flat config shape (bruteForce merged per-key). @private */
 function mergeConfig(base, over) {
     const b = base || {};
@@ -82,6 +111,11 @@ function mergeConfig(base, over) {
         tokenExpiresIn: o.tokenExpiresIn !== undefined ? o.tokenExpiresIn : b.tokenExpiresIn,
         refreshTokenExpiresIn: o.refreshTokenExpiresIn !== undefined ? o.refreshTokenExpiresIn : b.refreshTokenExpiresIn,
         bcryptCost: o.bcryptCost !== undefined ? o.bcryptCost : b.bcryptCost,
+        // D-054 Option B — token-signing trio. `null` is a valid explicit value (iss/aud unset), so the
+        // merge keys on `!== undefined` (an override of `null` intentionally clears the baseline value).
+        jwtIssuer: o.jwtIssuer !== undefined ? o.jwtIssuer : b.jwtIssuer,
+        jwtAudience: o.jwtAudience !== undefined ? o.jwtAudience : b.jwtAudience,
+        jwtAlgorithm: o.jwtAlgorithm !== undefined ? o.jwtAlgorithm : b.jwtAlgorithm,
         bruteForce: Object.assign({}, b.bruteForce || {}, o.bruteForce || {}),
     };
     return out;
@@ -135,6 +169,12 @@ class AuthConfigService {
         if (auth.bruteForce !== undefined) out.bruteForce = auth.bruteForce;
         if (b.tokenExpiresIn !== undefined) out.tokenExpiresIn = b.tokenExpiresIn;
         if (b.refreshTokenExpiresIn !== undefined) out.refreshTokenExpiresIn = b.refreshTokenExpiresIn;
+        // D-054 Option B — token-signing baseline from settings.auth.* (D-029 naming). `algorithm` is
+        // read from either `jwtAlgorithm` or the TokenService-style `algorithm`, whichever settings.js uses.
+        if (auth.jwtIssuer !== undefined) out.jwtIssuer = auth.jwtIssuer;
+        if (auth.jwtAudience !== undefined) out.jwtAudience = auth.jwtAudience;
+        if (auth.jwtAlgorithm !== undefined) out.jwtAlgorithm = auth.jwtAlgorithm;
+        else if (auth.algorithm !== undefined) out.jwtAlgorithm = auth.algorithm;
         return out;
     }
 
@@ -160,7 +200,7 @@ class AuthConfigService {
         if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
             return { ok: false, errors: ['config must be an object'] };
         }
-        const allowed = new Set(['passwordMinLength', 'passwordBlocklist', 'bruteForce', 'tokenExpiresIn', 'refreshTokenExpiresIn', 'bcryptCost']);
+        const allowed = new Set(['passwordMinLength', 'passwordBlocklist', 'bruteForce', 'tokenExpiresIn', 'refreshTokenExpiresIn', 'bcryptCost', 'jwtIssuer', 'jwtAudience', 'jwtAlgorithm']);
         for (const k of Object.keys(patch)) {
             if (!allowed.has(k)) errors.push('unknown field: ' + k);
         }
@@ -182,6 +222,19 @@ class AuthConfigService {
             if (!Number.isInteger(v) || v < BOUNDS.bcryptCost.min || v > BOUNDS.bcryptCost.max) {
                 errors.push('bcryptCost must be an integer in [' + BOUNDS.bcryptCost.min + ',' + BOUNDS.bcryptCost.max + ']');
             }
+        }
+        // D-054 Option B — token-signing trio. iss/aud: null (unset) or a bounded non-empty string;
+        // algorithm: must be one of the HS-only allowed set (N-099). Changing any of these is a
+        // confirmed, session-ending change on the CLIENT (existing tokens then fail the unchanged strict
+        // `verify` ⇒ re-login) — the server only stores/applies; `verify` is NOT weakened.
+        if (patch.jwtIssuer !== undefined && !isValidClaimOrNull(patch.jwtIssuer)) {
+            errors.push('jwtIssuer must be null or a non-empty string of <=' + BOUNDS.jwtClaimMaxLen + ' chars');
+        }
+        if (patch.jwtAudience !== undefined && !isValidClaimOrNull(patch.jwtAudience)) {
+            errors.push('jwtAudience must be null or a non-empty string of <=' + BOUNDS.jwtClaimMaxLen + ' chars');
+        }
+        if (patch.jwtAlgorithm !== undefined && !ALLOWED_ALGORITHMS.includes(patch.jwtAlgorithm)) {
+            errors.push('jwtAlgorithm must be one of ' + ALLOWED_ALGORITHMS.join(', '));
         }
         if (patch.tokenExpiresIn !== undefined && !isValidDuration(patch.tokenExpiresIn)) {
             errors.push('tokenExpiresIn must be a positive number (seconds) or a duration string (e.g. "1h")');
@@ -228,6 +281,12 @@ class AuthConfigService {
         this.services.tokenService.reconfigure({
             tokenExpiresIn: effective.tokenExpiresIn,
             refreshTokenExpiresIn: effective.refreshTokenExpiresIn,
+            // D-054 Option B — token-signing trio applied live. The config key `jwtAlgorithm` maps to
+            // TokenService's `algorithm`. iss/aud may be null (unset). `verify` reads these live and stays
+            // strict + library-enforced; a change makes already-issued tokens fail verify ⇒ re-login.
+            jwtIssuer: effective.jwtIssuer,
+            jwtAudience: effective.jwtAudience,
+            algorithm: effective.jwtAlgorithm,
         });
     }
 
@@ -293,4 +352,4 @@ class AuthConfigService {
     }
 }
 
-module.exports = { AuthConfigService, CONFIG_DEFAULTS, BOUNDS, isValidDuration, mergeConfig };
+module.exports = { AuthConfigService, CONFIG_DEFAULTS, BOUNDS, ALLOWED_ALGORITHMS, isValidDuration, isValidClaimOrNull, mergeConfig };

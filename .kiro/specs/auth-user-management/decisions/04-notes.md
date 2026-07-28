@@ -1687,3 +1687,46 @@
   permitted" string (would add 13-locale machine-translation debt, 24.4). UX-only fix; server §05 remains the
   authority. Only `/editor` was exercised live as the representative admin route; the guard is shared, so the
   behaviour is identical across all AuthGuard routes by construction.
+
+
+### N-099 — VERIFIED: jsonwebtoken rejects a token that LACKS `iss`/`aud` when the verify option is set (breaks the §12 overlap-from-unset)
+
+- Date: 2026-07-28. Verified by reading the installed `server/node_modules/jsonwebtoken/verify.js` (not memory).
+- Facts (quoted logic):
+  - Audience: `const target = Array.isArray(payload.aud) ? payload.aud : [payload.aud];` then `match = target.some(... audience === targetAudience ...)`. If the token has NO `aud`, `payload.aud` is `undefined` ⇒ `target = [undefined]` ⇒ no match ⇒ `JsonWebTokenError('jwt audience invalid')`.
+  - Issuer: `invalid_issuer = (typeof options.issuer === 'string' && payload.iss !== options.issuer) || (Array.isArray(options.issuer) && options.issuer.indexOf(payload.iss) === -1)`. A token with no `iss` ⇒ `undefined !== 'X'` (or `indexOf(undefined) === -1`) ⇒ rejected.
+- Consequence for D-049 Phase 3 / task 20.3 (design/13 §12): the "overlap window accepts OLD or NEW iss/aud"
+  works via the library ONLY for a SET→SET change (`issuer:['old','new']` / `audience:['old','new']`). For the
+  UNSET→SET change — which is the FIRST time an admin ever configures iss/aud, i.e. the primary case — the
+  library cannot express "also accept tokens that have no iss/aud claim". Achieving zero-logout there REQUIRES
+  `TokenService.verify` to STOP passing `issuer`/`audience` to jsonwebtoken and MANUALLY check the claim against
+  an accept-set (treating absent-during-window as allowed). That is a hand-rolled rewrite of the most
+  security-critical function's claim validation — the risk that motivates the D-054 options below.
+- Second verified fact (algorithm scope): the module signs/verifies with FUXA's shared `secretCode` (a symmetric
+  secret; `DEFAULT_ALGORITHM='HS256'`). jsonwebtoken requires a symmetric key for `HS*` and an asymmetric key
+  for `RS*/PS*/ES*` (`secretOrPublicKey must be a symmetric key when using HS…`). FUXA's jwt path provides only
+  the shared secret, so a runtime `jwtAlgorithm` change is meaningfully limited to `HS256/HS384/HS512`; `RS*/ES*`
+  would need a keypair the platform does not supply here. The runtime-allowed alg set must therefore be HS-only.
+
+
+### N-100 — Task 20.3 (D-054 Option B) SERVER implemented + tested; client UI pending
+
+- Date: 2026-07-28. The user chose **Option B** (expose iss/aud/alg at runtime as confirmed, session-ending
+  changes; keep `verify` strict + library-enforced). This note records the SERVER half.
+- Server changes (all in `server/auth-management/services/auth-config.service.js` + its HTTP test):
+  `CONFIG_DEFAULTS` gains `jwtIssuer:null`, `jwtAudience:null`, `jwtAlgorithm:'HS256'`; new
+  `ALLOWED_ALGORITHMS=['HS256','HS384','HS512']` (HS-only per N-099); `BOUNDS` gains `jwtAlgorithms` +
+  `jwtClaimMaxLen:256`; `mergeConfig`/`_normalizeBaseline` carry the trio (`null` = explicit unset, keyed on
+  `!== undefined`; baseline reads `auth.jwtAlgorithm` — VERIFIED to match the composition root's
+  `algorithm: auth.jwtAlgorithm`, so `init()` cannot silently reset the signing config); `validate` adds
+  `isValidClaimOrNull` (null or bounded non-empty string) + the HS-only alg check; `_applyToServices` maps
+  `jwtAlgorithm`→`TokenService.algorithm` and pushes iss/aud live.
+- `TokenService.verify` NOT touched — it keeps passing `issuer`/`audience` to jsonwebtoken (library-enforced,
+  provable). Changing iss/aud/alg therefore invalidates existing tokens ⇒ 401 ⇒ the honest re-login UX
+  (correct after D-053). This is the whole point of Option B: the security kernel stays minimal.
+- A `*/` inside a JSDoc block (`RS*/PS*/ES*`) closed the comment early → `node --check` SyntaxError; reworded
+  to `RS/PS/ES families`. Caught by `node --check` before the suite ran (cheap gate first).
+- Verified: `node --check` clean; server mocha **216 passing** (was 211; +5 D-054 HTTP tests). No client build
+  (server-only change). **PENDING (next unit): client protocol/type + `AuthConfigPatch` keys + presenter form
+  fields + validate/buildPatch + the "Advanced — Token signing" section with a confirm-before-apply dialog
+  ("this signs out all sessions") + 13-locale i18n + presenter specs + browser e2e.**
