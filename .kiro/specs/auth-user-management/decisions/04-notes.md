@@ -1793,3 +1793,27 @@
 - Note: this only removes the SELF-INFLICTED 60s. A deployment where a genuine sub-init REJECTS would still hit
   the 60s fallback (FUXA's gate emits `init-*-ok` only on success) — that is pre-existing FUXA behaviour, out of
   our scope, and harmless (it still listens after 60s). Task 24.6 → done.
+
+
+### N-103 — Task 24.1 DONE: `.gitattributes` line-ending policy (root fix for N-089), user-approved
+
+- Date: 2026-07-28. User explicitly approved the repo-wide operation before I ran it (24.1 was gated on approval).
+- Root cause of N-089 (now understood precisely): binary assets — fonts especially — were NOT marked binary, so
+  git's CRLF↔LF conversion injected/stripped CR bytes and changed their STORED/checked-out bytes per OS (same
+  font 678,869 B on an LF checkout vs 688,873 B on a CRLF one). Because `client/dist` is committed, every build
+  artifact hash then shifted by machine and D-038's byte-identity check was unusable across machines.
+- Fix: added `/.gitattributes` — `* text=auto eol=lf` (normalize every text file to LF in repo AND working tree)
+  + explicit `binary` for png/gif/jpg/jpeg/ico/icns/eot/ttf/otf/woff/woff2/pdf/zip + `*.sh text eol=lf`. Verified
+  the tracked `.fuxap` files are JSON text (UTF-8 BOM + `{"devices"...`, no null bytes) so normalizing them is
+  safe; no `.bat`/`.cmd` exist so no CRLF-required Windows scripts to exempt.
+- IMPORTANT finding: `git add --renormalize .` produced **ZERO** staged changes — the repo already stored LF for
+  all text files and the correct (LF) font bytes. So `.gitattributes` is a **durable PREVENTIVE** fix: it stops
+  any future machine from CRLF-corrupting a binary on checkout/commit and forces LF in every working tree, rather
+  than repairing an existing corruption (there was none in the repo; the 688 KB was only ever in the other
+  machine's working tree). No mass renormalization commit was needed; `client/dist` was NOT rebuilt (unchanged).
+- Verified: `git check-attr` → `app.routing.ts` = text/eol lf; `client/dist/assets/fonts/*.woff2` = binary set,
+  text unset; `fuxa-logo.ico` = binary set. Working tree clean after. No code changed ⇒ server 216 / client 136
+  unaffected (not re-run). Note for the OTHER machine (ENDGAME\toann): on pull, a `git add --renormalize .` there
+  MAY show a one-time LF diff if its working tree currently holds CRLF — expected and benign; commit it once.
+- Task 24.1 → done. Remaining Phase-2 open items: 24.4 (i18n native review — needs a human), 24.5 (Angular/CSP —
+  large, documented-deferred N-079/N-080).

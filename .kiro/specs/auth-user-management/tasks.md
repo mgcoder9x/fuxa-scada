@@ -415,9 +415,9 @@ P-006 §05, P-007/P-008 §02, P-009 §12, P-010 jointly §04+§12, P-011 §05, P
     - _DONE 2026-07-27 (D-051, N-093): BROWSER — `operator1` (`user.read` only) sees the list with "Add User" hidden and 0 Edit / 0 Remove, while admin sees all. UX honesty ONLY: enforcement stays server-side; an absent seam offers everything and a non-boolean seam result fails SAFE (tested)._
 
 - [ ] 24. Open hardening / hygiene items (each tracked, none silently dropped)
-  - [ ] 24.1 Repository line-ending normalization (N-089)
+  - [x] 24.1 Repository line-ending normalization (N-089)
     - `.gitattributes` with `* text=auto eol=lf` (+ explicit `binary` for images/fonts) as an ISOLATED renormalization commit, so `client/dist` content hashes stop depending on the contributor's machine
-    - _AWAITING USER APPROVAL — repo-wide, one-time large diff. Measured evidence: the same font asset is 678,869 B (LF, repo) vs 688,873 B (CRLF, this worktree), so every dist hash shifts per machine and D-038's byte-identity verification is unusable here._
+    - _DONE 2026-07-28 (N-103, user-approved). Added `/.gitattributes` (`* text=auto eol=lf` + `binary` for png/gif/jpg/ico/icns/eot/ttf/otf/woff/woff2/pdf/zip + `*.sh` LF). ROOT of N-089: fonts weren't marked binary → git CRLF-converted them (678,869 B LF vs 688,873 B CRLF), and since `client/dist` is committed, dist hashes shifted per machine. `git add --renormalize .` produced ZERO changes — the repo already stored LF text + correct-byte fonts — so this is a durable PREVENTIVE fix (stops future CRLF corruption on any machine), not a repair; no mass commit, dist not rebuilt. Verified via `git check-attr` (fonts/images = binary set; `.ts` = text/eol lf). Note: the other machine may show a one-time benign LF diff on `git add --renormalize .` after pull._
 - [x] 24.2 Flag-gated redirect for the legacy `/users` / `/userRoles` routes (D-048 residual)
     - Under SUPERSEDE, a direct URL to the built-in pages should redirect to the module pages instead of rendering the superseded UI
     - _Requirements: 12.1_
